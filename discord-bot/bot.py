@@ -233,13 +233,19 @@ class BJView(discord.ui.View):
         await asyncio.sleep(1)
         await self.stop_game(i)
 
-    async def stop_game(self, i: discord.Interaction):
+   async def stop_game(self, i: discord.Interaction):
         await i.response.edit_message(content="🃏 **ディーラーの番です...**", view=None)
+        
+        # ディーラーが17以上になるまでカードを引く演出
         while calc_score(self.d_hand) < 17:
             await asyncio.sleep(1)
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
             await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\n現在のディーラーのカード: {d_str}")
+        
+        # カードをすべて引き終わった後、3秒間待機してドキドキ感を演出
+        await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定: {', '.join([card_to_str(c) for c in self.d_hand])}**\n結果を集計しています...")
+        await asyncio.sleep(3)
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
         if d_sc > 21 or p_sc > d_sc: 
@@ -250,9 +256,12 @@ class BJView(discord.ui.View):
             res = "💀 **負け...**"
         
         save_json(DATA_FILE, user_points)
+        
+        # 最終結果表示（プレイヤーとディーラー両方の全カードを表示）
         await i.edit_original_response(
-            content=f"─ 結果: {res} ─\nあなた: {p_sc}点 / ディーラー: {d_sc}点\n"
-                    f"ディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])}\n"
+            content=f"─ 結果: {res} ─\n\n"
+                    f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
+                    f"🤖 ディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])} ({d_sc}点)\n\n"
                     f"💰 **現在の所持金: {user_points.get(self.user_id, 0)}コイン**", 
             view=None
         )
