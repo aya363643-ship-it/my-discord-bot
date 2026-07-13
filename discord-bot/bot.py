@@ -41,7 +41,6 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 ANNOUNCEMENT_CHANNEL_ID = 1526095284357173358
 
 # ─── 💡 特定の人のみ許可する設定 ───
-# ⚠️ ここには名前ではなく、コピーした「数字のユーザーID」をカンマ区切りで入れてください！
 ALLOWED_USERS = [825679340209438820, 872839459740192768]
 
 # 特定の人かどうかを判定するカスタムチェック
@@ -115,7 +114,7 @@ async def give_points(ctx, member: discord.Member, amount: int):
 @bot.command()
 @is_allowed_user()
 async def reset_points(ctx, member: discord.Member):
-    """【管理者専用】💡 特定のユーザーのコインを0にする"""
+    """【管理者専用】特定のユーザーのコインを0にする"""
     try:
         data = get_user_data(member.id)
         data["points"] = 0
@@ -412,6 +411,9 @@ class DiceView(discord.ui.View):
         await self.msg.edit(content=content, view=self)
 
     async def roll(self, i: discord.Interaction):
+        # 💡 タイムアウトを防ぐため、演出アニメーションが始まる前に最優先でdeferを実行します！
+        await i.response.defer()
+        
         count = len(self.p_dice) + 1
         n = await self.roll_animation(f"あなた：{count}つ目を振っています...", False)
         self.p_dice.append(n)
@@ -436,11 +438,12 @@ class DiceView(discord.ui.View):
             
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
+            
+            # deferした後の最終結果の送信には i.edit_original_response を使用します
+            await i.edit_original_response(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
             self.stop()
         else:
             await self.update_view("1つ目が確定しました！")
-            await i.response.defer()
 
 # ─── コマンド (ゲーム開始と賭け金処理) ───
 async def get_bet(ctx):
