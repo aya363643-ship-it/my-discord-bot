@@ -287,47 +287,53 @@ class DiceView(discord.ui.View):
         self.p_dice = []
 
     async def roll_animation(self, label):
+        """回転中も現在の状況を表示し続けるアニメーション"""
         self.clear_items()
-        await self.msg.edit(view=self)
+        
         for _ in range(5):
             temp_n = random.randint(1, 6)
-            # 現在のアニメーション状況を表示
-            await self.msg.edit(content=f"🎲 **{label}**\n回転中: {temp_n} {self.dice_map[temp_n]}")
+            # 現在の確定済み情報をすべて表示しつつ、回転中の数字を併記
+            d_str = " ".join([self.dice_map[n] for n in self.d_dice])
+            p_str = " ".join([self.dice_map[n] for n in self.p_dice])
+            
+            content = (f"🎲 **ガチンコサイコロ勝負！**\n"
+                       f"ディーラー: {d_str}\n"
+                       f"あなた: {p_str} {'?' if not self.p_dice else ''} {self.dice_map[temp_n]} ({temp_n})\n\n"
+                       f"🎲 **{label}**")
+            
+            await self.msg.edit(content=content, view=self)
             await asyncio.sleep(0.3)
         return random.randint(1, 6)
 
     async def start_dice(self):
         # ディーラーのターン
-        d1 = await self.roll_animation("ディーラー：1つ目のサイコロを振っています...")
+        d1 = await self.roll_animation("ディーラー：1つ目を振っています...")
         self.d_dice.append(d1)
-        d2 = await self.roll_animation("ディーラー：2つ目のサイコロを振っています...")
+        d2 = await self.roll_animation("ディーラー：2つ目を振っています...")
         self.d_dice.append(d2)
         
-        await self.update_view("ディーラーのサイコロが出揃いました！あなたの番です。")
+        await self.update_view("ディーラーのサイコロが出揃いました！")
 
     async def update_view(self, status):
-        # 進行状況をわかりやすく表示
         d_str = " ".join([self.dice_map[n] for n in self.d_dice])
-        # プレイヤーの表示を現在振っている回数に合わせて更新
         p_str = " ".join([self.dice_map[n] for n in self.p_dice])
         count_p = len(self.p_dice) + 1
         
         content = (f"🎲 **ガチンコサイコロ勝負！**\n"
                    f"ディーラー: {d_str}\n"
                    f"あなた: {p_str}\n\n"
-                   f"【現在の状態】: {status}\n"
-                   f"※次はあなたの **{count_p}つ目** のサイコロです！")
+                   f"【状態】: {status}\n"
+                   f"※次はあなたの **{count_p}つ目** です！")
         
         self.clear_items()
         self.add_item(discord.ui.Button(label=f"{count_p}つ目を振る！", style=discord.ButtonStyle.success, custom_id="roll"))
         self.children[0].callback = self.roll
-        
         await self.msg.edit(content=content, view=self)
 
     async def roll(self, i: discord.Interaction):
         # プレイヤーのターン
         count = len(self.p_dice) + 1
-        n = await self.roll_animation(f"あなた：{count}つ目のサイコロを振っています...")
+        n = await self.roll_animation(f"あなた：{count}つ目を振っています...")
         self.p_dice.append(n)
         
         if len(self.p_dice) == 2:
