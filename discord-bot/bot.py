@@ -2,11 +2,28 @@ import discord
 from discord.ext import commands, tasks
 import random
 import asyncio
-import json
 import os
 from flask import Flask
 from threading import Thread
 from datetime import datetime, timedelta
+from pymongo import MongoClient
+
+# ─── MongoDB設定 ───
+# MongoDBへの接続情報
+MONGO_URI = "mongodb+srv://baketan373_db_user:15351348650Ad@cluster0.misxalm.mongodb.net/?appName=Cluster0"
+client = MongoClient(MONGO_URI)
+db = client["my_discord_bot"]
+collection = db["user_data"]
+
+# データの読み書き関数（JSONファイルを使わない）
+def get_user_data(user_id):
+    user_id_str = str(user_id)
+    data = collection.find_one({"_id": user_id_str})
+    if data: return data
+    return {"_id": user_id_str, "points": 1000, "last_daily": None}
+
+def save_user_data(user_id, data):
+    collection.update_one({"_id": str(user_id)}, {"$set": data}, upsert=True)
 
 # ─── 24時間稼働用サーバー ───
 app = Flask('')
@@ -15,28 +32,14 @@ def home(): return "I am alive"
 def run(): app.run(host='0.0.0.0', port=8080)
 Thread(target=run).start()
 
-# ─── ボット設定・データ管理 ───
+# ─── ボット設定 ───
 intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True
 bot = commands.Bot(command_prefix='!', intents=intents)
-DATA_FILE = 'points.json'
-DAILY_FILE = 'daily.json'
 
-def load_json(filename):
-    if os.path.exists(filename):
-        with open(filename, 'r', encoding='utf-8') as f: return json.load(f)
-    return {}
-
-def save_json(filename, data):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-user_points = load_json(DATA_FILE)
-daily_data = load_json(DAILY_FILE)
-
-# ─── VC関連 ───
 voice_states = {}
+NOTIFICATION_CHANNEL_ID = 1526095284357173358
 
 @bot.event
 async def on_ready():
@@ -44,19 +47,7 @@ async def on_ready():
     if not check_vc_time.is_running():
         check_vc_time.start()
 
-# ※以降の関数はすべてこのレベル（インデントなし）で記述してください
-@bot.event
-async def on_voice_state_update(member, before, after):
-    if before.channel is None and after.channel is not None:
-        voice_states[member.id] = datetime.now()
-    elif before.channel is not None and after.channel is None:
-        if member.id in voice_states:
-            del voice_states[member.id]
-
-# ─── 設定 ───
-NOTIFICATION_CHANNEL_ID = 1526095284357173358 # ←ここにチャンネルIDを入れてね！
-
-# ─── 定期的にVC滞在をチェックするタスク ───
+# ─── VCボーナス (MongoDB対応済み) ───
 @tasks.loop(seconds=60)
 async def check_vc_time():
     now = datetime.now()
@@ -64,56 +55,35 @@ async def check_vc_time():
         for vc in guild.voice_channels:
             for member in vc.members:
                 if member.bot: continue
-                
-                # 辞書にいない場合は現在時刻をセット
-                if member.id not in voice_states:
+                if member.id not in voice_states: voice_states[member.id] = now
+                if now - voice_states[member.id] >= timedelta(minutes=30):
+                    data = get_user_data(member.id)
+                    data["points"] += 50
+                    save_user_data(member.id, data)
                     voice_states[member.id] = now
-                    continue # 初回はスキップ
-                
-                # 30分（30分 * 60秒 = 1800秒）経過しているか確認
-                duration = now - voice_states[member.id]
-                if duration >= timedelta(minutes=30):
-                    user_id = str(member.id)
-                    user_points[user_id] = user_points.get(user_id, 0) + 50
-                    save_json(DATA_FILE, user_points)
-                    
-                    voice_states[member.id] = now  # 時間をリセット
-                    
                     channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
-                    if channel:
-                        await channel.send(
-                            f"🎙️ **VCボーナス！** <@{member.id}> さん、30分間お疲れ様！\n"
-                            f"💰 **50コイン** 付与！ (所持金: {user_points[user_id]}コイン)"
-                        )
+                    if channel: await channel.send(f"🎙️ VCボーナス！<@{member.id}> さん、50コイン付与！(所持金: {data['points']})")
 
-# ─── デイリーボーナス ───
+# ─── デイリーボーナス (MongoDB対応済み) ───
 @bot.command()
 async def daily(ctx):
     user_id = str(ctx.author.id)
+    data = get_user_data(user_id)
     now = datetime.now()
-    last_claimed_str = daily_data.get(user_id)
-    
-    if last_claimed_str:
-        last_claimed = datetime.fromisoformat(last_claimed_str)
-        next_claim = last_claimed + timedelta(hours=24)
-        if now < next_claim:
-            diff = next_claim - now
-            hours, remainder = divmod(int(diff.total_seconds()), 3600)
-            minutes, _ = divmod(remainder, 60)
-            await ctx.send(f"⏳ **あと {hours}時間{minutes}分** 待ってね！")
+    if data.get("last_daily"):
+        last_claimed = datetime.fromisoformat(data["last_daily"])
+        if now < last_claimed + timedelta(hours=24):
+            await ctx.send("⏳ まだだよ！")
             return
-
     amount = random.randint(100, 500)
-    user_points[user_id] = user_points.get(user_id, 0) + amount
-    daily_data[user_id] = now.isoformat()
-    save_json(DATA_FILE, user_points)
-    save_json(DAILY_FILE, daily_data)
-    await ctx.send(f"🎉 **デイリーボーナス！**\n💰 **+{amount}コイン** ゲット！")
+    data["points"] += amount
+    data["last_daily"] = now.isoformat()
+    save_user_data(user_id, data)
+    await ctx.send(f"🎉 デイリーボーナス！💰 +{amount}コイン")
 
-# ─── ゲーム共通ヘルパー ───
+# ─── ゲーム用ヘルパー (MongoDB対応) ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
 def card_to_str(c):
-    # 【固定】数字とマークの表記
     names = {1: 'A', 11: 'J', 12: 'Q', 13: 'K'}
     return f"{c['suit']}{names.get(c['num'], c['num'])}"
 
@@ -125,7 +95,6 @@ def calc_score(hand):
         else: score += card['num']
     while score > 21 and aces > 0: score -= 10; aces -= 1
     return score
-
 # ─── 各ゲームクラス ───
 class SlotView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
