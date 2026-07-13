@@ -79,6 +79,7 @@ def calc_score(hand):
         else: score += card['num']
     while score > 21 and aces > 0: score -= 10; aces -= 1
     return score
+
 # ─── 各ゲームクラス ───
 class SlotView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
@@ -102,12 +103,15 @@ class SlotView(discord.ui.View):
         if all(self.stopped):
             self.is_spinning = False; self.bg_task.cancel(); self.stop()
             win = sum([1 for r in range(3) if self.final_grid[r][0] == self.final_grid[r][1] == self.final_grid[r][2]])
+            data = get_user_data(self.user_id)
             if win > 0:
                 p = self.bet * (win * 10)
-                user_points[self.user_id] += p
-                res = f"🎉 **大勝利！{win}ライン的中！**\n💰 **{p}コイン獲得！**"
-            else: res = "💀 **残念！はずれ！**"
-            save_json(DATA_FILE, user_points)
+                data["points"] += p
+                save_user_data(self.user_id, data)
+                res = f"🎉 **大勝利！{win}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
+            else: 
+                res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
+            
             await interaction.response.edit_message(content=res, view=None)
 
     @discord.ui.button(label="STOP", style=discord.ButtonStyle.primary)
@@ -166,7 +170,8 @@ class BJView(discord.ui.View):
         await i.response.edit_message(content=f"🃏 カードを引いています...\n新しく出たカード: {card_to_str(card)}", view=None)
         await asyncio.sleep(1)
         if calc_score(self.p_hand) > 21:
-            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
+            data = get_user_data(self.user_id)
+            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {data['points']}コイン", view=None)
             self.stop()
         else:
             await self.update()
@@ -176,13 +181,14 @@ class BJView(discord.ui.View):
         await self.stop_game(i)
 
     async def double(self, i: discord.Interaction):
-        current_points = user_points.get(self.user_id, 0)
-        if current_points < self.bet:
+        data = get_user_data(self.user_id)
+        if data["points"] < self.bet:
             await i.response.edit_message(content="❌ 所持金不足でダブルダウンできません！", view=None)
             self.stop()
             return
         
-        user_points[self.user_id] -= self.bet
+        data["points"] -= self.bet
+        save_user_data(self.user_id, data)
         self.bet *= 2
         card = draw_card()
         self.p_hand.append(card)
@@ -193,8 +199,8 @@ class BJView(discord.ui.View):
         await asyncio.sleep(1)
         
         if calc_score(self.p_hand) > 21:
-            save_json(DATA_FILE, user_points)
-            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
+            data = get_user_data(self.user_id)
+            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {data['points']}コイン", view=None)
             self.stop()
         else:
             await self.stop_game(i)
@@ -213,19 +219,21 @@ class BJView(discord.ui.View):
         await asyncio.sleep(3)
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
+        data = get_user_data(self.user_id)
+
         if d_sc > 21 or p_sc > d_sc: 
-            user_points[self.user_id] += (self.bet * 2); res = "🎉 **勝ち！**"
+            data["points"] += (self.bet * 2); res = "🎉 **勝ち！**"
         elif p_sc == d_sc: 
-            user_points[self.user_id] += self.bet; res = "🤝 **引き分け**"
+            data["points"] += self.bet; res = "🤝 **引き分け**"
         else: 
             res = "💀 **負け...**"
         
-        save_json(DATA_FILE, user_points)
+        save_user_data(self.user_id, data)
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
                     f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
                     f"🤖 ディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])} ({d_sc}点)\n\n"
-                    f"💰 **現在の所持金: {user_points.get(self.user_id, 0)}コイン**", 
+                    f"💰 **現在の所持金: {data['points']}コイン**", 
             view=None
         )
         self.stop()
@@ -241,15 +249,12 @@ class DiceView(discord.ui.View):
         self.p_dice = []
 
     async def roll_animation(self, label, is_dealer):
-        """回転中も現在の状況を表示し続けるアニメーション"""
         self.clear_items()
-        
         for _ in range(5):
             temp_n = random.randint(1, 6)
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
             
-            # ディーラーが振っている時はディーラーの行で、プレイヤーの時はプレイヤーの行で回す
             if is_dealer:
                 content = (f"🎲 **ガチンコサイコロ勝負！**\n"
                            f"ディーラー: {d_str} {self.dice_map[temp_n]} ({temp_n})\n"
@@ -266,12 +271,10 @@ class DiceView(discord.ui.View):
         return random.randint(1, 6)
 
     async def start_dice(self):
-        # ディーラーのターン (is_dealer=True)
         d1 = await self.roll_animation("ディーラー：1つ目を振っています...", True)
         self.d_dice.append(d1)
         d2 = await self.roll_animation("ディーラー：2つ目を振っています...", True)
         self.d_dice.append(d2)
-        
         await self.update_view("ディーラーのサイコロが出揃いました！")
 
     async def update_view(self, status):
@@ -291,7 +294,6 @@ class DiceView(discord.ui.View):
         await self.msg.edit(content=content, view=self)
 
     async def roll(self, i: discord.Interaction):
-        # プレイヤーのターン (is_dealer=False)
         count = len(self.p_dice) + 1
         n = await self.roll_animation(f"あなた：{count}つ目を振っています...", False)
         self.p_dice.append(n)
@@ -299,32 +301,39 @@ class DiceView(discord.ui.View):
         if len(self.p_dice) == 2:
             d_sum, p_sum = sum(self.d_dice), sum(self.p_dice)
             res = "🤝 引き分け"
+            
+            data = get_user_data(self.user_id)
             if p_sum > d_sum: 
-                user_points[self.user_id] += (self.bet * 2); res = "🎉 勝ち！"
+                data["points"] += (self.bet * 2); res = "🎉 勝ち！"
             elif p_sum < d_sum: 
                 res = "💀 負け..."
             else:
-                user_points[self.user_id] += self.bet
+                data["points"] += self.bet
             
-            save_json(DATA_FILE, user_points)
+            save_user_data(self.user_id, data)
+            
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}", view=None)
+            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {data['points']}コイン", view=None)
             self.stop()
         else:
             await self.update_view("1つ目が確定しました！")
             await i.response.defer()
 
-# ─── コマンド ───
+# ─── コマンド (ゲーム開始と賭け金処理) ───
 async def get_bet(ctx):
     await ctx.send("💸 **賭け金を入力してね！**")
     try:
         m = await bot.wait_for('message', check=lambda x: x.author==ctx.author, timeout=30)
         bet = int(m.content)
         user_id = str(ctx.author.id)
-        if bet <= 0 or user_points.get(user_id, 0) < bet: return None
-        user_points[user_id] -= bet
-        save_json(DATA_FILE, user_points)
+        
+        data = get_user_data(user_id)
+        if bet <= 0 or data["points"] < bet: return None
+        
+        # 賭け金を引いてMongoDBに保存
+        data["points"] -= bet
+        save_user_data(user_id, data)
         return bet
     except: return None
 
@@ -346,7 +355,5 @@ async def dice(ctx):
     if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
     msg = await ctx.send("🎲 準備中..."); view = DiceView(bet, ctx.author.id, msg)
     await msg.edit(view=view); await view.start_dice()
-
-
 
 bot.run(os.getenv('TOKEN'))
