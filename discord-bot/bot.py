@@ -34,16 +34,19 @@ Thread(target=run).start()
 # ─── ボット設定 ───
 intents = discord.Intents.default()
 intents.message_content = True
-intents.voice_states = True  # 💡 VCの状態を検知するために必要！
+intents.voice_states = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+# ─── 💡 告知用チャンネルの設定 ───
+# コピペした「チャンネルID」を下の 00000000... の部分に上書きしてください！
+ANNOUNCEMENT_CHANNEL_ID = 1526095284357173358
+
 # ─── VC報酬用のデータ保持 ───
-vc_durations = {}  # {ユーザーID: 滞在分数}
+vc_durations = {}
 
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
-    # 💡 ボットが起動したら、VC監視タスクを開始する
     if not check_vc_rewards.is_running():
         check_vc_rewards.start()
 
@@ -54,14 +57,13 @@ async def check_vc_rewards():
         for vc in guild.voice_channels:
             for member in vc.members:
                 if member.bot:
-                    continue  # ボットは除外
+                    continue
 
-                # 💡 ミュート中や画面共有中などに関わらず、VCに名前があればカウントします
                 user_id = member.id
                 if user_id not in vc_durations:
                     vc_durations[user_id] = 0
                 
-                vc_durations[user_id] += 1  # 1分プラス
+                vc_durations[user_id] += 1
                 
                 # 30分経過したら報酬を付与
                 if vc_durations[user_id] >= 30:
@@ -71,11 +73,10 @@ async def check_vc_rewards():
                         data["points"] += 50
                         save_user_data(user_id, data)
                         
-                        # ユーザーにDMで通知（DMが閉じられている場合はスキップ）
-                        try:
-                            await member.send(f"🎙️ ボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！ (現在の所持金: {data['points']})")
-                        except:
-                            pass
+                        # 💡 サーバー内の特定のテキストチャンネルにメンション付きで告知する
+                        channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                        if channel:
+                            await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！ (現在の所持金: {data['points']})")
                     except Exception as e:
                         print(f"VC報酬付与エラー: {e}")
 
@@ -84,7 +85,6 @@ async def check_vc_rewards():
 async def on_voice_state_update(member, before, after):
     if member.bot:
         return
-    # 💡 VCから完全に退出（切断）した場合、その人のカウントを消去する
     if before.channel and not after.channel:
         if member.id in vc_durations:
             del vc_durations[member.id]
@@ -104,7 +104,7 @@ async def daily(ctx):
         diff = (now - last_claimed).total_seconds()
         if diff < 86400:
             remaining = int((86400 - diff) // 3600)
-            await ctx.send(f"⏳ まだだよ！あと約 {remaining} 時間待ね。")
+            await ctx.send(f"⏳ まだだよ！あと約 {remaining} 時間待ってね。")
             return
 
     amount = random.randint(100, 500)
@@ -291,7 +291,7 @@ class BJView(discord.ui.View):
             await asyncio.sleep(1)
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\n合适: {p_str}")
+            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\nあなた: {p_str}")
         
         await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定**\n結果を集計しています...")
         await asyncio.sleep(3)
@@ -401,7 +401,7 @@ class DiceView(discord.ui.View):
             
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await i.interaction.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
+            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
             self.stop()
         else:
             await self.update_view("1つ目が確定しました！")
@@ -455,6 +455,6 @@ async def dice(ctx):
     bet = await get_bet(ctx)
     if not bet: return
     msg = await ctx.send("🎲 準備中..."); view = DiceView(bet, ctx.author.id, msg)
-    await msg.edit(view=view); await view.start_dice()
+    await msg.edit(view=view); await v.start_dice()
 
 bot.run(os.getenv('TOKEN'))
