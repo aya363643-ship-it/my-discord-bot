@@ -64,24 +64,26 @@ async def check_vc_time():
         for vc in guild.voice_channels:
             for member in vc.members:
                 if member.bot: continue
+                
+                # 辞書にいない場合は現在時刻をセット
                 if member.id not in voice_states:
                     voice_states[member.id] = now
+                    continue # 初回はスキップ
                 
-                # 30分経過の判定
-                if now - voice_states[member.id] >= timedelta(minutes=30):
+                # 30分（30分 * 60秒 = 1800秒）経過しているか確認
+                duration = now - voice_states[member.id]
+                if duration >= timedelta(minutes=30):
                     user_id = str(member.id)
                     user_points[user_id] = user_points.get(user_id, 0) + 50
                     save_json(DATA_FILE, user_points)
                     
                     voice_states[member.id] = now  # 時間をリセット
                     
-                    # 指定チャンネルに通知を送る
                     channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
                     if channel:
                         await channel.send(
-                            f"🎙️ **VCボーナス！**\n"
-                            f"<@{member.id}> さん、30分間VCにお疲れ様！\n"
-                            f"💰 **50コイン** 付与しました！ (所持金: {user_points[user_id]}コイン)"
+                            f"🎙️ **VCボーナス！** <@{member.id}> さん、30分間お疲れ様！\n"
+                            f"💰 **50コイン** 付与！ (所持金: {user_points[user_id]}コイン)"
                         )
 
 # ─── デイリーボーナス ───
