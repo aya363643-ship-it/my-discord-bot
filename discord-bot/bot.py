@@ -61,9 +61,9 @@ async def daily(ctx):
 # ─── ゲーム共通ヘルパー ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
 def card_to_str(c):
-    # 元の数字とマークの形式に戻しました
-    names = {1: 'A', 11: 'J', 12: 'Q', 13: 'K'}
-    return f"{c['suit']}{names.get(c['num'], c['num'])}"
+    # スペル表記に変更
+    names = {1: 'Ace', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six', 7: 'Seven', 8: 'Eight', 9: 'Nine', 10: 'Ten', 11: 'Jack', 12: 'Queen', 13: 'King'}
+    return f"{c['suit']}{names[c['num']]}"
 
 def calc_score(hand):
     score, aces = 0, 0
@@ -114,22 +114,57 @@ class SlotView(discord.ui.View):
         await i.response.edit_message(view=self)
         if all(self.stopped): await self.check_finish(i)
 
+# ─── ブラックジャック (演出強化版) ───
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
         self.bet = bet; self.user_id = str(user_id); self.msg = msg
-        self.p_hand = [draw_card(), draw_card()]; self.d_hand = [draw_card(), draw_card()]
-    async def update(self, i=None):
-        txt = f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {card_to_str(self.d_hand[0])} , ❓\nあなた ({calc_score(self.p_hand)}点): {', '.join([card_to_str(c) for c in self.p_hand])}"
-        if i: await i.response.edit_message(content=txt, view=self)
-        else: await self.msg.edit(content=txt, view=self)
+        self.p_hand = []; self.d_hand = []
+        self.can_double = True
+
+    async def start_game(self):
+        # 演出：交互に1枚ずつ配る
+        for _ in range(2):
+            self.p_hand.append(draw_card())
+            await self.update(f"🃏 カードを配っています... あなたのカード: {card_to_str(self.p_hand[-1])}")
+            await asyncio.sleep(1)
+            self.d_hand.append(draw_card())
+            await self.update(f"🃏 ディーラーがカードを引きました...")
+            await asyncio.sleep(1)
+        await self.update("あなたのターンです！")
+
+    async def update(self, status=""):
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+        txt = f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}"
+        await self.msg.edit(content=txt, view=self)
+
     @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
     async def hit(self, i, b):
+        self.can_double = False # 2回目からはダブルダウン不可
         self.p_hand.append(draw_card())
-        if calc_score(self.p_hand) > 21: await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None); self.stop()
-        else: await self.update(i)
+        if calc_score(self.p_hand) > 21:
+            await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None); self.stop()
+        else:
+            self.update_buttons()
+            await i.response.edit_message(view=self); await self.update()
+
     @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
     async def stand(self, i, b):
+        self.stop_game(i)
+
+    @discord.ui.button(label="Double", style=discord.ButtonStyle.success)
+    async def double(self, i, b):
+        # 賭け金を追加して1枚だけ引いて強制スタンド
+        user_points[self.user_id] -= self.bet
+        self.bet *= 2
+        self.p_hand.append(draw_card())
+        await self.stop_game(i)
+
+    def update_buttons(self):
+        self.children[2].disabled = not self.can_double # Doubleボタンの制御
+
+    async def stop_game(self, i):
         while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
         if d_sc > 21 or p_sc > d_sc: user_points[self.user_id] += (self.bet * 2); res = "🎉 **勝ち！**"
