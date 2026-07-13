@@ -35,7 +35,7 @@ def save_json(filename, data):
 user_points = load_json(DATA_FILE)
 daily_data = load_json(DAILY_FILE)
 
-# ─── VC滞在ボーナス用データ ───
+# ─── VC滞在ボーナス用データ　 ───
 voice_states = {}  # {user_id: join_time}
 
 @bot.event
