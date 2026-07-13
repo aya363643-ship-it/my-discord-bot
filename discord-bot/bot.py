@@ -224,8 +224,7 @@ class BJView(discord.ui.View):
     async def stand(self, i: discord.Interaction):
         await self.stop_game(i)
 
-async def double(self, i: discord.Interaction):
-        # 1. 念のため、再度所持金を確認して賭け金を引く
+    async def double(self, i: discord.Interaction):
         current_points = user_points.get(self.user_id, 0)
         if current_points < self.bet:
             await i.response.edit_message(content="❌ 所持金不足でダブルダウンできません！", view=None)
@@ -234,35 +233,28 @@ async def double(self, i: discord.Interaction):
         
         user_points[self.user_id] -= self.bet
         self.bet *= 2
-        
-        # 2. カードを引く
         card = draw_card()
         self.p_hand.append(card)
         
-        # 3. 表示を更新
         await i.response.edit_message(content=f"🔥 **ダブルダウン！**\n引いたカード: {card_to_str(card)}", view=None)
         await asyncio.sleep(1)
         
-        # 4. バースト判定（合計点数が21を超えたら終了）
         if calc_score(self.p_hand) > 21:
-            save_json(DATA_FILE, user_points) # セーブを忘れない
+            save_json(DATA_FILE, user_points)
             await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
             self.stop()
         else:
-            # バーストしなければそのままディーラー戦へ
             await self.stop_game(i)
 
     async def stop_game(self, i: discord.Interaction):
         await i.response.edit_message(content="🃏 **ディーラーの番です...**", view=None)
         
-        # ディーラーが17以上になるまでカードを引く演出
         while calc_score(self.d_hand) < 17:
             await asyncio.sleep(1)
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
             await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\n現在のディーラーのカード: {d_str}")
         
-        # カードをすべて引き終わった後、3秒間待機
         await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定: {', '.join([card_to_str(c) for c in self.d_hand])}**\n結果を集計しています...")
         await asyncio.sleep(3)
         
@@ -276,7 +268,6 @@ async def double(self, i: discord.Interaction):
         
         save_json(DATA_FILE, user_points)
         
-        # 最終結果表示
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
                     f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
