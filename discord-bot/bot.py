@@ -61,9 +61,9 @@ async def daily(ctx):
 # ─── ゲーム共通ヘルパー ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
 def card_to_str(c):
-    # スペル表記に変更
-    names = {1: 'Ace', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five', 6: 'Six', 7: 'Seven', 8: 'Eight', 9: 'Nine', 10: 'Ten', 11: 'Jack', 12: 'Queen', 13: 'King'}
-    return f"{c['suit']}{names[c['num']]}"
+    # 元の数字とマークの形式に戻しました
+    names = {1: 'A', 11: 'J', 12: 'Q', 13: 'K'}
+    return f"{c['suit']}{names.get(c['num'], c['num'])}"
 
 def calc_score(hand):
     score, aces = 0, 0
