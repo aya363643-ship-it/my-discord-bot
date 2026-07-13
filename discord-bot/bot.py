@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import random
 import asyncio
 import json
@@ -18,6 +18,7 @@ Thread(target=run).start()
 # ─── ボット設定・データ管理 ───
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True  # VC監視のために必要
 bot = commands.Bot(command_prefix='!', intents=intents)
 DATA_FILE = 'points.json'
 DAILY_FILE = 'daily.json'
@@ -33,6 +34,56 @@ def save_json(filename, data):
 
 user_points = load_json(DATA_FILE)
 daily_data = load_json(DAILY_FILE)
+
+# ─── VC滞在ボーナス用データ ───
+voice_states = {}  # {user_id: join_time}
+
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
+    if not check_vc_time.is_running():
+        check_vc_time.start()
+
+@bot.event
+async def on_voice_state_update(member, before, after):
+    # VCに参加した時
+    if before.channel is None and after.channel is not None:
+        voice_states[member.id] = datetime.now()
+    # VCから退出した時
+    elif before.channel is not None and after.channel is None:
+        if member.id in voice_states:
+            del voice_states[member.id]
+
+# ─── 設定 ───
+NOTIFICATION_CHANNEL_ID = 1526095284357173358 # ←ここにチャンネルIDを入れてね！
+
+# ─── 定期的にVC滞在をチェックするタスク ───
+@tasks.loop(seconds=60)
+async def check_vc_time():
+    now = datetime.now()
+    for guild in bot.guilds:
+        for vc in guild.voice_channels:
+            for member in vc.members:
+                if member.bot: continue
+                if member.id not in voice_states:
+                    voice_states[member.id] = now
+                
+                # 30分経過の判定
+                if now - voice_states[member.id] >= timedelta(minutes=30):
+                    user_id = str(member.id)
+                    user_points[user_id] = user_points.get(user_id, 0) + 50
+                    save_json(DATA_FILE, user_points)
+                    
+                    voice_states[member.id] = now  # 時間をリセット
+                    
+                    # 指定チャンネルに通知を送る
+                    channel = bot.get_channel(NOTIFICATION_CHANNEL_ID)
+                    if channel:
+                        await channel.send(
+                            f"🎙️ **VCボーナス！**\n"
+                            f"<@{member.id}> さん、30分間VCにお疲れ様！\n"
+                            f"💰 **50コイン** 付与しました！ (所持金: {user_points[user_id]}コイン)"
+                        )
 
 # ─── デイリーボーナス ───
 @bot.command()
@@ -214,5 +265,7 @@ async def dice(ctx):
     bet = await get_bet(ctx)
     if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
     msg = await ctx.send("🎲 準備中..."); await msg.edit(view=DiceView(bet, ctx.author.id, msg))
+
+
 
 bot.run(os.getenv('TOKEN'))
