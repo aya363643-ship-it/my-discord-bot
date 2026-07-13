@@ -37,9 +37,21 @@ intents.message_content = True
 intents.voice_states = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ─── 💡 告知用チャンネルの設定 ───
-# コピペした「チャンネルID」を下の 00000000... の部分に上書きしてください！
+# ─── 告知用チャンネルの設定 ───
 ANNOUNCEMENT_CHANNEL_ID = 1526095284357173358
+
+# ─── 💡 特定の人のみ許可する設定 ───
+# ⚠️ ここには名前ではなく、コピーした「数字のユーザーID」をカンマ区切りで入れてください！
+ALLOWED_USERS = [123456789012345678, 987654321098765432]
+
+# 特定の人かどうかを判定するカスタムチェック
+def is_allowed_user():
+    async def predicate(ctx):
+        if ctx.author.id in ALLOWED_USERS:
+            return True
+        await ctx.send("❌ このコマンドを実行する権限がありません！")
+        return False
+    return commands.check(predicate)
 
 # ─── VC報酬用のデータ保持 ───
 vc_durations = {}
@@ -65,15 +77,13 @@ async def check_vc_rewards():
                 
                 vc_durations[user_id] += 1
                 
-                # 30分経過したら報酬を付与
                 if vc_durations[user_id] >= 30:
-                    vc_durations[user_id] = 0  # カウントをリセット
+                    vc_durations[user_id] = 0
                     try:
                         data = get_user_data(user_id)
                         data["points"] += 50
                         save_user_data(user_id, data)
                         
-                        # 💡 サーバー内の特定のテキストチャンネルにメンション付きで告知する
                         channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
                         if channel:
                             await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！ (現在の所持金: {data['points']})")
@@ -89,7 +99,32 @@ async def on_voice_state_update(member, before, after):
         if member.id in vc_durations:
             del vc_durations[member.id]
 
-# ─── コマンド ───
+# ─── 管理者専用コマンド ───
+@bot.command()
+@is_allowed_user()
+async def give_points(ctx, member: discord.Member, amount: int):
+    """【管理者専用】特定のユーザーにコインを付与する"""
+    try:
+        data = get_user_data(member.id)
+        data["points"] += amount
+        save_user_data(member.id, data)
+        await ctx.send(f"👑 管理者権限: {member.mention} に 💰 **{amount}コイン** を付与しました！ (現在の所持金: {data['points']})")
+    except Exception as e:
+        await ctx.send(f"❌ データの更新に失敗しました: `{e}`")
+
+@bot.command()
+@is_allowed_user()
+async def reset_points(ctx, member: discord.Member):
+    """【管理者専用】💡 特定のユーザーのコインを0にする"""
+    try:
+        data = get_user_data(member.id)
+        data["points"] = 0
+        save_user_data(member.id, data)
+        await ctx.send(f"👑 管理者権限: {member.mention} の所持コインを **0** にリセットしました！")
+    except Exception as e:
+        await ctx.send(f"❌ データの更新に失敗しました: `{e}`")
+
+# ─── 一般コマンド ───
 @bot.command()
 async def daily(ctx):
     try:
@@ -455,6 +490,6 @@ async def dice(ctx):
     bet = await get_bet(ctx)
     if not bet: return
     msg = await ctx.send("🎲 準備中..."); view = DiceView(bet, ctx.author.id, msg)
-    await msg.edit(view=view); await v.start_dice()
+    await msg.edit(view=view); await view.start_dice()
 
 bot.run(os.getenv('TOKEN'))
