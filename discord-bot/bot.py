@@ -168,58 +168,77 @@ class SlotView(discord.ui.View):
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
-        self.bet = bet; self.user_id = str(user_id); self.msg = msg
-        self.p_hand = []; self.d_hand = []
+        self.bet = bet
+        self.user_id = str(user_id)
+        self.msg = msg
+        self.p_hand = []
+        self.d_hand = []
         self.can_double = True
+        # 初期状態はボタンを無効化（view=Noneで呼び出すため、ここでの設定は不要）
 
     async def start_game(self):
+        # 1. 準備中を表示（ボタンなし）
+        await self.msg.edit(content="🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: 準備中...\nあなた: 準備中...\n\n🃏 カードを配っています...", view=None)
+        
+        # 2. カードを配る演出
         for _ in range(2):
             self.p_hand.append(draw_card())
-            await self.update(f"🃏 カードを引いています... あなたのカード: {card_to_str(self.p_hand[-1])}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.8)
             self.d_hand.append(draw_card())
-            await self.update(f"🃏 ディーラーがカードを引きました...")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.8)
+            
+        # 3. カードが配り終わったらボタンを表示してターン開始
         await self.update("あなたのターンです！")
 
     async def update(self, status=""):
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         d_str = f"{card_to_str(self.d_hand[0])} , ❓"
         txt = f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}"
+        
+        # ボタンを再構築して表示
+        self.clear_items()
+        self.add_item(discord.ui.Button(label="Hit", style=discord.ButtonStyle.primary, custom_id="hit"))
+        self.add_item(discord.ui.Button(label="Stand", style=discord.ButtonStyle.secondary, custom_id="stand"))
+        if self.can_double:
+            self.add_item(discord.ui.Button(label="Double", style=discord.ButtonStyle.success, custom_id="double"))
+        
+        # ボタンのリスナーを再設定
+        self.children[0].callback = self.hit
+        self.children[1].callback = self.stand
+        if self.can_double:
+            self.children[2].callback = self.double
+            
         await self.msg.edit(content=txt, view=self)
 
-    @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
-    async def hit(self, i, b):
+    async def hit(self, i: discord.Interaction):
         self.can_double = False
         self.p_hand.append(draw_card())
         if calc_score(self.p_hand) > 21:
-            await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None); self.stop()
+            await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None)
+            self.stop()
         else:
-            self.update_buttons()
-            await i.response.edit_message(view=self); await self.update()
+            await i.response.defer()
+            await self.update()
 
-    @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
-    async def stand(self, i, b):
+    async def stand(self, i: discord.Interaction):
         await self.stop_game(i)
 
-    @discord.ui.button(label="Double", style=discord.ButtonStyle.success)
-    async def double(self, i, b):
+    async def double(self, i: discord.Interaction):
         user_points[self.user_id] -= self.bet
         self.bet *= 2
         self.p_hand.append(draw_card())
         await self.stop_game(i)
 
-    def update_buttons(self):
-        self.children[2].disabled = not self.can_double
-
-    async def stop_game(self, i):
+    async def stop_game(self, i: discord.Interaction):
         while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
         if d_sc > 21 or p_sc > d_sc: user_points[self.user_id] += (self.bet * 2); res = "🎉 **勝ち！**"
         elif p_sc == d_sc: user_points[self.user_id] += self.bet; res = "🤝 **引き分け**"
         else: res = "💀 **負け...**"
         save_json(DATA_FILE, user_points)
-        await i.response.edit_message(content=f"─ 結果: {res} ─\nあなた: {p_sc}点 / ディーラー: {d_sc}点", view=None); self.stop()
+        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+        await i.response.edit_message(content=f"─ 結果: {res} ─\nあなた: {p_sc}点 / ディーラー: {d_sc}点\nディーラーの全カード: {d_str}", view=None)
+        self.stop()
 
 class DiceView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
