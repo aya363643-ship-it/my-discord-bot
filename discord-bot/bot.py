@@ -75,22 +75,20 @@ async def check_vc_rewards():
                 if user_id not in vc_durations:
                     vc_durations[user_id] = 0
                 
+                # 1分経過したのでカウントアップ
                 vc_durations[user_id] += 1
                 
-                # 1分経過するごとに報酬を付与する設定
-                if vc_durations[user_id] >= 1:
+                # 30分経過したかの判定
+                if vc_durations[user_id] >= 30:
                     vc_durations[user_id] = 0 # リセット
                     try:
                         data = get_user_data(user_id)
-                        # 1分あたりの報酬額を適宜調整してください（例: 5コイン）
-                        reward = 5 
-                        data["points"] += reward
+                        data["points"] += 50 # 50コイン付与
                         save_user_data(user_id, data)
                         
-                        # 毎回通知するとログが流れるため、必要に応じてコメントアウトしてください
                         channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
                         if channel:
-                            await channel.send(f"🎙️ {member.mention} がボイスチャンネルに1分滞在したため、💰 **{reward}コイン** を獲得しました！ (現在の所持金: {data['points']})")
+                            await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！ (現在の所持金: {data['points']})")
                     except Exception as e:
                         print(f"VC報酬付与エラー: {e}")
 
