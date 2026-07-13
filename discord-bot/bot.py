@@ -174,18 +174,21 @@ class BJView(discord.ui.View):
         self.p_hand = []
         self.d_hand = []
         self.can_double = True
-        # 初期状態はボタンを無効化（view=Noneで呼び出すため、ここでの設定は不要）
 
     async def start_game(self):
-        # 1. 準備中を表示（ボタンなし）
-        await self.msg.edit(content="🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: 準備中...\nあなた: 準備中...\n\n🃏 カードを配っています...", view=None)
+        # 1. 最初は空の状態でスタート
+        await self.msg.edit(content="🃏 **Blackjack (賭け金:{})**\nカードを配っています...".format(self.bet), view=None)
         
-        # 2. カードを配る演出
-        for _ in range(2):
+        # 2. 1枚ずつ引く演出
+        for i in range(2):
+            await asyncio.sleep(0.8)
             self.p_hand.append(draw_card())
+            await self.msg.edit(content=f"🃏 **Blackjack** (賭け金:{self.bet})\nカードを配っています...\nあなた: {', '.join([card_to_str(c) for c in self.p_hand])}")
+            
             await asyncio.sleep(0.8)
             self.d_hand.append(draw_card())
-            await asyncio.sleep(0.8)
+            d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+            await self.msg.edit(content=f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {d_str}\nあなた: {', '.join([card_to_str(c) for c in self.p_hand])}")
             
         # 3. カードが配り終わったらボタンを表示してターン開始
         await self.update("あなたのターンです！")
@@ -195,14 +198,14 @@ class BJView(discord.ui.View):
         d_str = f"{card_to_str(self.d_hand[0])} , ❓"
         txt = f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}"
         
-        # ボタンを再構築して表示
+        # ボタンの構築
         self.clear_items()
         self.add_item(discord.ui.Button(label="Hit", style=discord.ButtonStyle.primary, custom_id="hit"))
         self.add_item(discord.ui.Button(label="Stand", style=discord.ButtonStyle.secondary, custom_id="stand"))
         if self.can_double:
             self.add_item(discord.ui.Button(label="Double", style=discord.ButtonStyle.success, custom_id="double"))
         
-        # ボタンのリスナーを再設定
+        # イベント割り当て
         self.children[0].callback = self.hit
         self.children[1].callback = self.stand
         if self.can_double:
@@ -212,12 +215,17 @@ class BJView(discord.ui.View):
 
     async def hit(self, i: discord.Interaction):
         self.can_double = False
-        self.p_hand.append(draw_card())
+        card = draw_card()
+        self.p_hand.append(card)
+        
+        # Hitした時も一瞬「引いています...」を表示
+        await i.response.edit_message(content=f"🃏 カードを引いています...\n新しく出たカード: {card_to_str(card)}", view=None)
+        await asyncio.sleep(1)
+        
         if calc_score(self.p_hand) > 21:
-            await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None)
+            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None)
             self.stop()
         else:
-            await i.response.defer()
             await self.update()
 
     async def stand(self, i: discord.Interaction):
@@ -226,18 +234,28 @@ class BJView(discord.ui.View):
     async def double(self, i: discord.Interaction):
         user_points[self.user_id] -= self.bet
         self.bet *= 2
-        self.p_hand.append(draw_card())
+        card = draw_card()
+        self.p_hand.append(card)
+        await i.response.edit_message(content=f"🔥 **ダブルダウン！**\n引いたカード: {card_to_str(card)}", view=None)
+        await asyncio.sleep(1)
         await self.stop_game(i)
 
     async def stop_game(self, i: discord.Interaction):
-        while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
+        # ディーラーのカードオープン演出
+        await i.response.edit_message(content="🃏 **ディーラーの番です...**", view=None)
+        while calc_score(self.d_hand) < 17:
+            await asyncio.sleep(1)
+            self.d_hand.append(draw_card())
+            d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\n現在のディーラーのカード: {d_str}")
+        
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
         if d_sc > 21 or p_sc > d_sc: user_points[self.user_id] += (self.bet * 2); res = "🎉 **勝ち！**"
         elif p_sc == d_sc: user_points[self.user_id] += self.bet; res = "🤝 **引き分け**"
         else: res = "💀 **負け...**"
         save_json(DATA_FILE, user_points)
-        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-        await i.response.edit_message(content=f"─ 結果: {res} ─\nあなた: {p_sc}点 / ディーラー: {d_sc}点\nディーラーの全カード: {d_str}", view=None)
+        
+        await i.edit_original_response(content=f"─ 結果: {res} ─\nあなた: {p_sc}点 / ディーラー: {d_sc}点\nディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])}", view=None)
         self.stop()
 
 class DiceView(discord.ui.View):
