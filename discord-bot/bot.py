@@ -6,6 +6,7 @@ import json
 import os
 from flask import Flask
 from threading import Thread
+from datetime import datetime, timedelta
 
 # ─── 24時間稼働用サーバー ───
 app = Flask('')
@@ -19,17 +20,49 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 DATA_FILE = 'points.json'
+DAILY_FILE = 'daily.json'
 
-def load_points():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, 'r', encoding='utf-8') as f: return json.load(f)
+def load_json(filename):
+    if os.path.exists(filename):
+        with open(filename, 'r', encoding='utf-8') as f: return json.load(f)
     return {}
 
-def save_points(data):
-    with open(DATA_FILE, 'w', encoding='utf-8') as f:
+def save_json(filename, data):
+    with open(filename, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-user_points = load_points()
+user_points = load_json(DATA_FILE)
+daily_data = load_json(DAILY_FILE)
+
+# ─── デイリーボーナス機能 ───
+@bot.command()
+async def daily(ctx):
+    user_id = str(ctx.author.id)
+    now = datetime.now()
+    
+    # 前回の取得時間を取得
+    last_claimed_str = daily_data.get(user_id)
+    
+    if last_claimed_str:
+        last_claimed = datetime.fromisoformat(last_claimed_str)
+        next_claim = last_claimed + timedelta(hours=24)
+        
+        if now < next_claim:
+            diff = next_claim - now
+            hours, remainder = divmod(int(diff.total_seconds()), 3600)
+            minutes, _ = divmod(remainder, 60)
+            await ctx.send(f"⏳ まだ受け取れないよ！あと {hours}時間{minutes}分後にまた来てね！")
+            return
+
+    # ボーナス付与
+    amount = random.randint(100, 500)
+    user_points[user_id] = user_points.get(user_id, 0) + amount
+    daily_data[user_id] = now.isoformat()
+    
+    save_json(DATA_FILE, user_points)
+    save_json(DAILY_FILE, daily_data)
+    
+    await ctx.send(f"🎉 デイリーボーナス！\n{amount}コインゲットしたよ！\n（現在の所持金: {user_points[user_id]} コイン）")
 
 # ─── ゲーム用ヘルパー ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
