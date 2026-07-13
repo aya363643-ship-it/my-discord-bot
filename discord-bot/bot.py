@@ -11,7 +11,6 @@ import pymongo
 
 # ─── MongoDB設定 ───
 MONGO_URI = "mongodb+srv://baketan373_db_user:15351348650Ad@cluster0.misxalm.mongodb.net/?appName=Cluster0"
-# serverSelectionTimeoutMS=5000 を追加して、繋がらない時に何分もフリーズするのを防ぐ（5秒でタイムアウト）
 client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client["my_discord_bot"]
 collection = db["user_data"]
@@ -35,31 +34,77 @@ Thread(target=run).start()
 # ─── ボット設定 ───
 intents = discord.Intents.default()
 intents.message_content = True
+intents.voice_states = True  # 💡 VCの状態を検知するために必要！
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# ─── VC報酬用のデータ保持 ───
+vc_durations = {}  # {ユーザーID: 滞在分数}
 
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
+    # 💡 ボットが起動したら、VC監視タスクを開始する
+    if not check_vc_rewards.is_running():
+        check_vc_rewards.start()
+
+# ─── VC滞在をチェックする定期タスク (1分ごとに実行) ───
+@tasks.loop(minutes=1)
+async def check_vc_rewards():
+    for guild in bot.guilds:
+        for vc in guild.voice_channels:
+            for member in vc.members:
+                if member.bot:
+                    continue  # ボットは除外
+
+                # 💡 ミュート中や画面共有中などに関わらず、VCに名前があればカウントします
+                user_id = member.id
+                if user_id not in vc_durations:
+                    vc_durations[user_id] = 0
+                
+                vc_durations[user_id] += 1  # 1分プラス
+                
+                # 30分経過したら報酬を付与
+                if vc_durations[user_id] >= 30:
+                    vc_durations[user_id] = 0  # カウントをリセット
+                    try:
+                        data = get_user_data(user_id)
+                        data["points"] += 50
+                        save_user_data(user_id, data)
+                        
+                        # ユーザーにDMで通知（DMが閉じられている場合はスキップ）
+                        try:
+                            await member.send(f"🎙️ ボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！ (現在の所持金: {data['points']})")
+                        except:
+                            pass
+                    except Exception as e:
+                        print(f"VC報酬付与エラー: {e}")
+
+# ─── VCの入退室を検知するイベント ───
+@bot.event
+async def on_voice_state_update(member, before, after):
+    if member.bot:
+        return
+    # 💡 VCから完全に退出（切断）した場合、その人のカウントを消去する
+    if before.channel and not after.channel:
+        if member.id in vc_durations:
+            del vc_durations[member.id]
 
 # ─── コマンド ───
 @bot.command()
 async def daily(ctx):
     try:
-        # データベース接続テストを兼ねる
         data = get_user_data(ctx.author.id)
     except Exception as e:
-        await ctx.send(f"❌ データベースへの接続に失敗しました。\nMongoDB Atlasの `Network Access` 設定で `0.0.0.0/0` が許可されているか確認してください。\nエラー詳細: `{e}`")
+        await ctx.send(f"❌ データベースへの接続に失敗しました。\nエラー詳細: `{e}`")
         return
 
     now = datetime.now()
-    
-    # 24時間経過チェック
     if data.get("last_daily"):
         last_claimed = datetime.fromisoformat(data["last_daily"])
         diff = (now - last_claimed).total_seconds()
         if diff < 86400:
             remaining = int((86400 - diff) // 3600)
-            await ctx.send(f"⏳ まだだよ！あと約 {remaining} 時間待ってね。")
+            await ctx.send(f"⏳ まだだよ！あと約 {remaining} 時間待ね。")
             return
 
     amount = random.randint(100, 500)
@@ -82,7 +127,7 @@ async def points(ctx):
     except Exception as e:
         await ctx.send(f"❌ 所持金の取得に失敗しました: `{e}`")
 
-# ─── ゲーム用ヘルパー (MongoDB対応) ───
+# ─── ゲーム用ヘルパー ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
 def card_to_str(c):
     names = {1: 'A', 11: 'J', 12: 'Q', 13: 'K'}
@@ -246,7 +291,7 @@ class BJView(discord.ui.View):
             await asyncio.sleep(1)
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\nあなた: {p_str}")
+            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\n合适: {p_str}")
         
         await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定**\n結果を集計しています...")
         await asyncio.sleep(3)
@@ -356,7 +401,7 @@ class DiceView(discord.ui.View):
             
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
+            await i.interaction.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
             self.stop()
         else:
             await self.update_view("1つ目が確定しました！")
