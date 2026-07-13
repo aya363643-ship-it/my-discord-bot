@@ -209,7 +209,6 @@ class BJView(discord.ui.View):
         self.can_double = False
         card = draw_card()
         self.p_hand.append(card)
-        # 一時的なメッセージ表示
         await i.response.edit_message(content=f"🃏 カードを引いています...\n新しく出たカード: {card_to_str(card)}", view=None)
         await asyncio.sleep(1)
         if calc_score(self.p_hand) > 21:
@@ -219,7 +218,6 @@ class BJView(discord.ui.View):
             await self.update()
 
     async def stand(self, i: discord.Interaction):
-        # 呼び出し元でeditする必要があるため、一旦defer
         await i.response.defer()
         await self.stop_game(i)
 
@@ -235,7 +233,9 @@ class BJView(discord.ui.View):
         card = draw_card()
         self.p_hand.append(card)
         
-        await i.response.edit_message(content=f"🔥 **ダブルダウン！**\n引いたカード: {card_to_str(card)}", view=None)
+        # ダブルダウン後のカード表示を明確にする
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        await i.response.edit_message(content=f"🔥 **ダブルダウン！**\n引いたカード: {card_to_str(card)}\n現在のあなたの手札: {p_str}", view=None)
         await asyncio.sleep(1)
         
         if calc_score(self.p_hand) > 21:
@@ -243,20 +243,19 @@ class BJView(discord.ui.View):
             await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
             self.stop()
         else:
-            # stop_game内で再編集するので、ここではview=Noneにせず遷移
             await self.stop_game(i)
 
     async def stop_game(self, i: discord.Interaction):
-        # メッセージがすでに編集されている可能性があるため、edit_original_responseを使用
-        await i.edit_original_response(content="🃏 **ディーラーの番です...**", view=None)
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        await i.edit_original_response(content=f"🃏 **ディーラーの番です...**\nあなたの全カード: {p_str}", view=None)
         
         while calc_score(self.d_hand) < 17:
             await asyncio.sleep(1)
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\n現在のディーラーのカード: {d_str}")
+            await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\nあなた: {p_str}")
         
-        await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定: {', '.join([card_to_str(c) for c in self.d_hand])}**\n結果を集計しています...")
+        await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定**\n結果を集計しています...")
         await asyncio.sleep(3)
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
