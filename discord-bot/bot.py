@@ -279,16 +279,68 @@ class BJView(discord.ui.View):
 class DiceView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
-        self.bet = bet; self.user_id = str(user_id); self.msg = msg
-    @discord.ui.button(label="振る！", style=discord.ButtonStyle.success)
-    async def roll(self, i, b):
-        b.disabled = True; d_n, my_n = random.randint(1,6), random.randint(1,6)
-        dice_map = {1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅'}
-        res = "💀 負け..."
-        if my_n > d_n: user_points[self.user_id] += (self.bet * 2); res = "🎉 勝ち！"
-        elif my_n == d_n: user_points[self.user_id] += self.bet; res = "🤝 引き分け"
-        save_json(DATA_FILE, user_points)
-        await i.response.edit_message(content=f"🎲 **ガチンコサイコロ勝負！**\nディーラー: {dice_map[d_n]} vs あなた: {dice_map[my_n]}\n結果: {res}", view=None)
+        self.bet = bet
+        self.user_id = str(user_id)
+        self.msg = msg
+        self.dice_map = {1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅'}
+        self.d_dice = []
+        self.p_dice = []
+
+    async def roll_animation(self, label):
+        # アニメーション中はボタンを消す（押させない）
+        self.clear_items()
+        await self.msg.edit(view=self)
+        
+        for _ in range(5):
+            temp_n = random.randint(1, 6)
+            await self.msg.edit(content=f"🎲 **{label}**\n数字: {temp_n} {self.dice_map[temp_n]}")
+            await asyncio.sleep(0.3)
+        return random.randint(1, 6)
+
+    async def start_dice(self):
+        # ディーラーのターン
+        d1 = await self.roll_animation("ディーラーが1つ目のサイコロを振っています...")
+        self.d_dice.append(d1)
+        d2 = await self.roll_animation("ディーラーが2つ目のサイコロを振っています...")
+        self.d_dice.append(d2)
+        
+        await self.update_view("ディーラーのサイコロが出揃いました！あなたの番です。")
+
+    async def update_view(self, status):
+        d_str = " ".join([self.dice_map[n] for n in self.d_dice])
+        p_str = " ".join([self.dice_map[n] for n in self.p_dice])
+        content = f"🎲 **ガチンコサイコロ勝負！**\nディーラー: {d_str}\nあなた: {p_str}\n\n{status}"
+        
+        self.clear_items()
+        self.add_item(discord.ui.Button(label="振る！", style=discord.ButtonStyle.success, custom_id="roll"))
+        self.children[0].callback = self.roll
+        
+        await self.msg.edit(content=content, view=self)
+
+    async def roll(self, i: discord.Interaction):
+        # プレイヤーのターン
+        n = await self.roll_animation("サイコロを振っています...")
+        self.p_dice.append(n)
+        
+        if len(self.p_dice) == 2:
+            # 終了判定
+            d_sum, p_sum = sum(self.d_dice), sum(self.p_dice)
+            res = "🤝 引き分け"
+            if p_sum > d_sum: 
+                user_points[self.user_id] += (self.bet * 2); res = "🎉 勝ち！"
+            elif p_sum < d_sum: 
+                res = "💀 負け..."
+            else:
+                user_points[self.user_id] += self.bet
+            
+            save_json(DATA_FILE, user_points)
+            d_str = " ".join([self.dice_map[n] for n in self.d_dice])
+            p_str = " ".join([self.dice_map[n] for n in self.p_dice])
+            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}", view=None)
+            self.stop()
+        else:
+            await self.update_view("もう一度ボタンを押して2つ目を振ってください！")
+            await i.response.defer()
 
 # ─── コマンド ───
 async def get_bet(ctx):
@@ -319,7 +371,8 @@ async def blackjack(ctx):
 async def dice(ctx):
     bet = await get_bet(ctx)
     if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
-    msg = await ctx.send("🎲 準備中..."); await msg.edit(view=DiceView(bet, ctx.author.id, msg))
+    msg = await ctx.send("🎲 準備中..."); view = DiceView(bet, ctx.author.id, msg)
+    await msg.edit(view=view); await view.start_dice()
 
 
 
