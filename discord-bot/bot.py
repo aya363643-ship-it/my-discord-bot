@@ -177,17 +177,14 @@ class BJView(discord.ui.View):
 
     async def start_game(self):
         await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\nカードを配っています...", view=None)
-        
         for i in range(2):
             await asyncio.sleep(0.8)
             self.p_hand.append(draw_card())
             await self.msg.edit(content=f"🃏 **Blackjack** (賭け金:{self.bet})\nカードを配っています...\nあなた: {', '.join([card_to_str(c) for c in self.p_hand])}")
-            
             await asyncio.sleep(0.8)
             self.d_hand.append(draw_card())
             d_str = f"{card_to_str(self.d_hand[0])} , ❓"
             await self.msg.edit(content=f"🃏 **Blackjack** (賭け金:{self.bet})\nディーラー: {d_str}\nあなた: {', '.join([card_to_str(c) for c in self.p_hand])}")
-            
         await self.update("あなたのターンです！")
 
     async def update(self, status=""):
@@ -212,9 +209,9 @@ class BJView(discord.ui.View):
         self.can_double = False
         card = draw_card()
         self.p_hand.append(card)
+        # 一時的なメッセージ表示
         await i.response.edit_message(content=f"🃏 カードを引いています...\n新しく出たカード: {card_to_str(card)}", view=None)
         await asyncio.sleep(1)
-        
         if calc_score(self.p_hand) > 21:
             await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
             self.stop()
@@ -222,6 +219,8 @@ class BJView(discord.ui.View):
             await self.update()
 
     async def stand(self, i: discord.Interaction):
+        # 呼び出し元でeditする必要があるため、一旦defer
+        await i.response.defer()
         await self.stop_game(i)
 
     async def double(self, i: discord.Interaction):
@@ -244,10 +243,12 @@ class BJView(discord.ui.View):
             await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {user_points.get(self.user_id, 0)}コイン", view=None)
             self.stop()
         else:
+            # stop_game内で再編集するので、ここではview=Noneにせず遷移
             await self.stop_game(i)
 
     async def stop_game(self, i: discord.Interaction):
-        await i.response.edit_message(content="🃏 **ディーラーの番です...**", view=None)
+        # メッセージがすでに編集されている可能性があるため、edit_original_responseを使用
+        await i.edit_original_response(content="🃏 **ディーラーの番です...**", view=None)
         
         while calc_score(self.d_hand) < 17:
             await asyncio.sleep(1)
@@ -267,7 +268,6 @@ class BJView(discord.ui.View):
             res = "💀 **負け...**"
         
         save_json(DATA_FILE, user_points)
-        
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
                     f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
