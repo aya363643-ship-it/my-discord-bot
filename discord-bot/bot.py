@@ -321,17 +321,26 @@ class BJView(discord.ui.View):
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         await i.edit_original_response(content=f"🃏 **ディーラーの番です...**\nあなたの全カード: {p_str}", view=None)
         
+        # ディーラーが引く処理
         while calc_score(self.d_hand) < 17:
-            await asyncio.sleep(1)
+            await asyncio.sleep(1.5) # 少し間隔を空けて見やすくする
             self.d_hand.append(draw_card())
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
             await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\nディーラー: {d_str}\nあなた: {p_str}")
         
-        await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定**\n結果を集計しています...")
-        await asyncio.sleep(3)
-        
+        # ここで「最終結果を表示する前の一覧表示」を追加
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
+        d_str_final = ", ".join([card_to_str(c) for c in self.d_hand])
         
+        await i.edit_original_response(
+            content=f"🃏 **ディーラーの手札が確定しました！**\n\n"
+                    f"👤 あなた: {p_str} ({p_sc}点)\n"
+                    f"🤖 ディーラー: {d_str_final} ({d_sc}点)\n\n"
+                    f"集計中..."
+        )
+        await asyncio.sleep(3) # 結果発表前に3秒間見せる
+        
+        # 最終的な勝敗判定とデータ更新
         try:
             data = get_user_data(self.user_id)
             if d_sc > 21 or p_sc > d_sc: 
@@ -348,8 +357,8 @@ class BJView(discord.ui.View):
         
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
-                    f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
-                    f"🤖 ディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])} ({d_sc}点)\n\n"
+                    f"👤 あなたの全カード: {p_str} ({p_sc}点)\n"
+                    f"🤖 ディーラーの全カード: {d_str_final} ({d_sc}点)\n\n"
                     f"💰 **現在の所持金: {pts_str}**", 
             view=None
         )
