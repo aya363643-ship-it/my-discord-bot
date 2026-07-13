@@ -5,12 +5,14 @@ import asyncio
 import os
 from flask import Flask
 from threading import Thread
-from datetime import datetime, timedelta
+from datetime import datetime
 from pymongo import MongoClient
+import pymongo
 
 # ─── MongoDB設定 ───
 MONGO_URI = "mongodb+srv://baketan373_db_user:15351348650Ad@cluster0.misxalm.mongodb.net/?appName=Cluster0"
-client = MongoClient(MONGO_URI)
+# serverSelectionTimeoutMS=5000 を追加して、繋がらない時に何分もフリーズするのを防ぐ（5秒でタイムアウト）
+client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client["my_discord_bot"]
 collection = db["user_data"]
 
@@ -42,7 +44,13 @@ async def on_ready():
 # ─── コマンド ───
 @bot.command()
 async def daily(ctx):
-    data = get_user_data(ctx.author.id)
+    try:
+        # データベース接続テストを兼ねる
+        data = get_user_data(ctx.author.id)
+    except Exception as e:
+        await ctx.send(f"❌ データベースへの接続に失敗しました。\nMongoDB Atlasの `Network Access` 設定で `0.0.0.0/0` が許可されているか確認してください。\nエラー詳細: `{e}`")
+        return
+
     now = datetime.now()
     
     # 24時間経過チェック
@@ -57,13 +65,22 @@ async def daily(ctx):
     amount = random.randint(100, 500)
     data["points"] += amount
     data["last_daily"] = now.isoformat()
-    save_user_data(ctx.author.id, data)
+    
+    try:
+        save_user_data(ctx.author.id, data)
+    except Exception as e:
+        await ctx.send(f"❌ データの保存に失敗しました: `{e}`")
+        return
+        
     await ctx.send(f"🎉 デイリーボーナス！💰 +{amount}コイン (現在の所持金: {data['points']})")
 
 @bot.command()
 async def points(ctx):
-    data = get_user_data(ctx.author.id)
-    await ctx.send(f"💰 あなたの所持金は {data['points']} コインです。")
+    try:
+        data = get_user_data(ctx.author.id)
+        await ctx.send(f"💰 あなたの所持金は {data['points']} コインです。")
+    except Exception as e:
+        await ctx.send(f"❌ 所持金の取得に失敗しました: `{e}`")
 
 # ─── ゲーム用ヘルパー (MongoDB対応) ───
 def draw_card(): return {'num': random.randint(1, 13), 'suit': random.choice(['♠️', '♥️', '♣️', '♦️'])}
@@ -103,14 +120,17 @@ class SlotView(discord.ui.View):
         if all(self.stopped):
             self.is_spinning = False; self.bg_task.cancel(); self.stop()
             win = sum([1 for r in range(3) if self.final_grid[r][0] == self.final_grid[r][1] == self.final_grid[r][2]])
-            data = get_user_data(self.user_id)
-            if win > 0:
-                p = self.bet * (win * 10)
-                data["points"] += p
-                save_user_data(self.user_id, data)
-                res = f"🎉 **大勝利！{win}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
-            else: 
-                res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
+            try:
+                data = get_user_data(self.user_id)
+                if win > 0:
+                    p = self.bet * (win * 10)
+                    data["points"] += p
+                    save_user_data(self.user_id, data)
+                    res = f"🎉 **大勝利！{win}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
+                else: 
+                    res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
+            except Exception as e:
+                res = f"❌ ゲームは終了しましたが、データの保存に失敗しました: `{e}`"
             
             await interaction.response.edit_message(content=res, view=None)
 
@@ -170,8 +190,11 @@ class BJView(discord.ui.View):
         await i.response.edit_message(content=f"🃏 カードを引いています...\n新しく出たカード: {card_to_str(card)}", view=None)
         await asyncio.sleep(1)
         if calc_score(self.p_hand) > 21:
-            data = get_user_data(self.user_id)
-            await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {data['points']}コイン", view=None)
+            try:
+                data = get_user_data(self.user_id)
+                await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {data['points']}コイン", view=None)
+            except:
+                await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n❌ 所持金の取得失敗", view=None)
             self.stop()
         else:
             await self.update()
@@ -181,25 +204,35 @@ class BJView(discord.ui.View):
         await self.stop_game(i)
 
     async def double(self, i: discord.Interaction):
-        data = get_user_data(self.user_id)
+        try:
+            data = get_user_data(self.user_id)
+        except Exception as e:
+            await i.response.edit_message(content=f"❌ データベースエラー: `{e}`", view=None)
+            self.stop()
+            return
+
         if data["points"] < self.bet:
             await i.response.edit_message(content="❌ 所持金不足でダブルダウンできません！", view=None)
             self.stop()
             return
         
         data["points"] -= self.bet
-        save_user_data(self.user_id, data)
+        try:
+            save_user_data(self.user_id, data)
+        except Exception as e:
+            await i.response.edit_message(content=f"❌ データの保存失敗: `{e}`", view=None)
+            self.stop()
+            return
+
         self.bet *= 2
         card = draw_card()
         self.p_hand.append(card)
         
-        # ダブルダウン後のカード表示を明確にする
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         await i.response.edit_message(content=f"🔥 **ダブルダウン！**\n引いたカード: {card_to_str(card)}\n現在のあなたの手札: {p_str}", view=None)
         await asyncio.sleep(1)
         
         if calc_score(self.p_hand) > 21:
-            data = get_user_data(self.user_id)
             await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)\n💰 現在の所持金: {data['points']}コイン", view=None)
             self.stop()
         else:
@@ -219,21 +252,26 @@ class BJView(discord.ui.View):
         await asyncio.sleep(3)
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
-        data = get_user_data(self.user_id)
-
-        if d_sc > 21 or p_sc > d_sc: 
-            data["points"] += (self.bet * 2); res = "🎉 **勝ち！**"
-        elif p_sc == d_sc: 
-            data["points"] += self.bet; res = "🤝 **引き分け**"
-        else: 
-            res = "💀 **負け...**"
         
-        save_user_data(self.user_id, data)
+        try:
+            data = get_user_data(self.user_id)
+            if d_sc > 21 or p_sc > d_sc: 
+                data["points"] += (self.bet * 2); res = "🎉 **勝ち！**"
+            elif p_sc == d_sc: 
+                data["points"] += self.bet; res = "🤝 **引き分け**"
+            else: 
+                res = "💀 **負け...**"
+            save_user_data(self.user_id, data)
+            pts_str = f"{data['points']}コイン"
+        except Exception as e:
+            res = f"⚠️ 試合終了（データ保存失敗: {e}）"
+            pts_str = "エラー"
+        
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
                     f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
                     f"🤖 ディーラーの全カード: {', '.join([card_to_str(c) for c in self.d_hand])} ({d_sc}点)\n\n"
-                    f"💰 **現在の所持金: {data['points']}コイン**", 
+                    f"💰 **現在の所持金: {pts_str}**", 
             view=None
         )
         self.stop()
@@ -302,19 +340,23 @@ class DiceView(discord.ui.View):
             d_sum, p_sum = sum(self.d_dice), sum(self.p_dice)
             res = "🤝 引き分け"
             
-            data = get_user_data(self.user_id)
-            if p_sum > d_sum: 
-                data["points"] += (self.bet * 2); res = "🎉 勝ち！"
-            elif p_sum < d_sum: 
-                res = "💀 負け..."
-            else:
-                data["points"] += self.bet
-            
-            save_user_data(self.user_id, data)
+            try:
+                data = get_user_data(self.user_id)
+                if p_sum > d_sum: 
+                    data["points"] += (self.bet * 2); res = "🎉 勝ち！"
+                elif p_sum < d_sum: 
+                    res = "💀 負け..."
+                else:
+                    data["points"] += self.bet
+                save_user_data(self.user_id, data)
+                pts_str = f"{data['points']}コイン"
+            except Exception as e:
+                res = f"⚠️ 終了（データ保存失敗: {e}）"
+                pts_str = "エラー"
             
             d_str = " ".join([self.dice_map[n] for n in self.d_dice])
             p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {data['points']}コイン", view=None)
+            await i.response.edit_message(content=f"🎲 **結果発表！**\nディーラー: {d_str} (合計{d_sum})\nあなた: {p_str} (合計{p_sum})\n\n{res}\n💰 所持金: {pts_str}", view=None)
             self.stop()
         else:
             await self.update_view("1つ目が確定しました！")
@@ -328,31 +370,45 @@ async def get_bet(ctx):
         bet = int(m.content)
         user_id = str(ctx.author.id)
         
-        data = get_user_data(user_id)
-        if bet <= 0 or data["points"] < bet: return None
+        try:
+            data = get_user_data(user_id)
+        except Exception as e:
+            await ctx.send(f"❌ データベースからユーザーデータを取得できませんでした: `{e}`")
+            return None
+
+        if bet <= 0 or data["points"] < bet: 
+            await ctx.send("❌ 不正な額か、所持金が足りません！")
+            return None
         
-        # 賭け金を引いてMongoDBに保存
         data["points"] -= bet
         save_user_data(user_id, data)
         return bet
-    except: return None
+    except asyncio.TimeoutError:
+        await ctx.send("⏱️ 時間切れです。もう一度コマンドを入力してください。")
+        return None
+    except ValueError:
+        await ctx.send("❌ 有効な数値を入力してください。")
+        return None
+    except Exception as e:
+        await ctx.send(f"❌ エラーが発生しました: `{e}`")
+        return None
 
 @bot.command()
 async def slot(ctx):
     bet = await get_bet(ctx)
-    if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
+    if not bet: return
     msg = await ctx.send("🎰 準備中..."); await msg.edit(view=SlotView(bet, ctx.author.id, msg))
 
 @bot.command()
 async def blackjack(ctx):
     bet = await get_bet(ctx)
-    if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
+    if not bet: return
     msg = await ctx.send("🃏 準備中..."); v = BJView(bet, ctx.author.id, msg); await msg.edit(view=v); await v.start_game()
 
 @bot.command()
 async def dice(ctx):
     bet = await get_bet(ctx)
-    if not bet: await ctx.send("❌ 不正な額か所持金不足です。"); return
+    if not bet: return
     msg = await ctx.send("🎲 準備中..."); view = DiceView(bet, ctx.author.id, msg)
     await msg.edit(view=view); await view.start_dice()
 
