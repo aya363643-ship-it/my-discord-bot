@@ -15,7 +15,7 @@ client = MongoClient(MONGO_URI)
 db = client["my_discord_bot"]
 collection = db["user_data"]
 
-# データの読み書き関数（JSONファイルを使わない）
+# データの読み書き関数（JSONファイルを使わないよ）
 def get_user_data(user_id):
     user_id_str = str(user_id)
     data = collection.find_one({"_id": user_id_str})
