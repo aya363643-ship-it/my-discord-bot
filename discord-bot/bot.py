@@ -35,7 +35,7 @@ def save_json(filename, data):
 user_points = load_json(DATA_FILE)
 daily_data = load_json(DAILY_FILE)
 
-# ─── VC滞在ボーナス用データ　 ───
+# ─── VC滞在ボーナス用データ ───
 voice_states = {}  # {user_id: join_time}
 
 @bot.event
@@ -233,7 +233,7 @@ class BJView(discord.ui.View):
         await asyncio.sleep(1)
         await self.stop_game(i)
 
-   async def stop_game(self, i: discord.Interaction):
+    async def stop_game(self, i: discord.Interaction):
         await i.response.edit_message(content="🃏 **ディーラーの番です...**", view=None)
         
         # ディーラーが17以上になるまでカードを引く演出
@@ -243,7 +243,7 @@ class BJView(discord.ui.View):
             d_str = ", ".join([card_to_str(c) for c in self.d_hand])
             await i.edit_original_response(content=f"🃏 **ディーラードロー中...**\n現在のディーラーのカード: {d_str}")
         
-        # カードをすべて引き終わった後、3秒間待機してドキドキ感を演出
+        # カードをすべて引き終わった後、3秒間待機
         await i.edit_original_response(content=f"🃏 **ディーラーの全カード確定: {', '.join([card_to_str(c) for c in self.d_hand])}**\n結果を集計しています...")
         await asyncio.sleep(3)
         
@@ -257,7 +257,7 @@ class BJView(discord.ui.View):
         
         save_json(DATA_FILE, user_points)
         
-        # 最終結果表示（プレイヤーとディーラー両方の全カードを表示）
+        # 最終結果表示
         await i.edit_original_response(
             content=f"─ 結果: {res} ─\n\n"
                     f"👤 あなたの全カード: {', '.join([card_to_str(c) for c in self.p_hand])} ({p_sc}点)\n"
