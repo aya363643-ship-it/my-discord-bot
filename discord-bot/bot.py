@@ -219,27 +219,24 @@ class SlotView(discord.ui.View):
             if r < 20: return [[val]*3 for val in ['🍒']*3]
             return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
 
-    def check_win(self, grid):
-        lines = []
-        for r in range(3):
-            if grid[r][0] == grid[r][1] == grid[r][2]: lines.append(grid[r][0])
-        if grid[0][0] == grid[1][1] == grid[2][2]: lines.append(grid[0][0])
-        if grid[0][2] == grid[1][1] == grid[2][0]: lines.append(grid[0][2])
-        return lines
-
     async def start_spin(self, interaction: discord.Interaction):
         await interaction.response.defer()
         
-        # 3回シャッフルして「回転中」の演出を出す
-        for _ in range(3):
-            temp_grid = [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
-            grid_str = "\n".join([" | ".join(row) for row in temp_grid])
-            embed = discord.Embed(title="🎰 スロット回転中...", description=f"{grid_str}", color=0x3498db)
-            await self.msg.edit(embed=embed, view=None)
-            await asyncio.sleep(0.5)
+        # 演出：左から順番に確定していくようなアニメーション
+        current_grid = [["❓", "❓", "❓"], ["❓", "❓", "❓"], ["❓", "❓", "❓"]]
         
-        # 1秒待機して結果を表示
-        await asyncio.sleep(1)
+        for col in range(3):
+            for _ in range(3): # 各列で3回ランダム表示
+                for row in range(3):
+                    current_grid[row][col] = random.choice(self.icons)
+                grid_str = "\n".join([" | ".join(row) for row in current_grid])
+                await self.msg.edit(embed=discord.Embed(title="🎰 スロット回転中...", description=f"{grid_str}", color=0x3498db))
+                await asyncio.sleep(0.3)
+            # 1列ずつ確定
+            for row in range(3):
+                current_grid[row][col] = self.final_grid[row][col]
+        
+        await asyncio.sleep(0.5)
         await self.show_result()
 
     async def show_result(self):
@@ -257,18 +254,18 @@ class SlotView(discord.ui.View):
             win = int(self.bet * mult)
             data["points"] += win
             save_user_data(self.user_id, data)
-            res_text = f"🎉 {mult}倍的中！\n💰 {win}コイン獲得！\n💳 現在の所持金: {data['points']}コイン"
+            res_msg = f"🎉 **大当り！ {mult}倍！**\n💰 獲得: +{win}コイン"
+            color = 0xf1c40f
             if mult == 7.0 and not self.is_jackpot:
                 slot_data[self.user_id]["jackpot_until"] = time.time() + 10
-                res_text += "\n🚨 **JACKPOTモード突入！**"
-            color = 0xf1c40f
+                res_msg += "\n🚨 **JACKPOTモード突入！**"
         else:
-            res_text = f"💀 残念！はずれ！\n📉 損失: {self.bet}コイン\n💳 現在の所持金: {data['points']}コイン"
+            res_msg = f"💀 **残念！はずれ！**\n📉 損失: -{self.bet}コイン"
             color = 0x95a5a6
 
         grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
-        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=color)
-        await self.msg.edit(embed=embed)
+        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_msg}\n💳 現在の所持金: {data['points']}コイン", color=color)
+        await self.msg.edit(embed=embed, view=None)
 
     def check_win(self, grid):
         lines = []
@@ -277,41 +274,6 @@ class SlotView(discord.ui.View):
         if grid[0][0] == grid[1][1] == grid[2][2]: lines.append(grid[0][0])
         if grid[0][2] == grid[1][1] == grid[2][0]: lines.append(grid[0][2])
         return lines
-
-    async def start_spin(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        embed = discord.Embed(title="🎰 スロット演出中", description="ぐるぐる...ぐるぐる...", color=0x3498db)
-        await self.msg.edit(embed=embed, view=None)
-        
-        await asyncio.sleep(1.5)
-        # 演出省略：最終結果を表示
-        await self.show_result()
-
-    async def show_result(self):
-        lines = self.check_win(self.final_grid)
-        mult = 1.0
-        if '🎰' in lines: mult = 7.0
-        elif '💎' in lines: mult = 3.0
-        elif '✨' in lines: mult = 2.0
-        elif '🍇' in lines: mult = 1.5
-        elif '🍒' in lines: mult = 1.2
-
-        res_text = "残念！はずれ！"
-        if mult > 1.0:
-            win = int(self.bet * mult)
-            data = get_user_data(self.user_id)
-            data["points"] += win
-            save_user_data(self.user_id, data)
-            res_text = f"🎉 {mult}倍的中！ {win}コイン獲得！"
-            
-            # ジャックポット判定（7が揃ったら）
-            if mult == 7.0 and not self.is_jackpot:
-                slot_data[self.user_id]["jackpot_until"] = time.time() + 10
-                res_text += "\n🚨 **JACKPOTモード突入！**"
-
-        grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
-        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=0xf1c40f)
-        await self.msg.edit(embed=embed)
 
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
