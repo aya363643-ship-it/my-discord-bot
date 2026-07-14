@@ -199,153 +199,124 @@ class SlotView(discord.ui.View):
         current_time = time.time()
         self.is_jackpot = current_time < slot_data[self.user_id]["jackpot_until"]
 
-        # 絵柄の設定（ベルを多めに）
         self.icons = ['🎰', '💎', '🔔', '🔔', '🔔', '🍒', '🍋', '🍇', '✨', '🍀']
         self.seven_icon = '🎰'
         self.bell_icon = '🔔'
         
         # 最終的なリールの結果を先に決めておく
         if self.is_jackpot:
-            # ジャックポット中は必ずベルが揃う
             self.final_grid = [[self.bell_icon for _ in range(3)] for _ in range(3)]
         else:
-            # 通常時は確率リストからランダム
             self.final_grid = [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
 
-        self.stopped = [False, False, False]
-        self.is_spinning = True
+        # スピン開始ボタン
+        self.btn_spin = discord.ui.Button(label="レバーを叩く！", style=discord.ButtonStyle.success, emoji="🕹️")
+        self.btn_spin.callback = self.start_spin
         
-        # ボタンの追加
-        self.btn_left = discord.ui.Button(label="左(1)", style=discord.ButtonStyle.primary, custom_id="stop_0")
-        self.btn_center = discord.ui.Button(label="中(2)", style=discord.ButtonStyle.primary, custom_id="stop_1")
-        self.btn_right = discord.ui.Button(label="右(3)", style=discord.ButtonStyle.primary, custom_id="stop_2")
-        
-        self.btn_left.callback = self.stop_left
-        self.btn_center.callback = self.stop_center
-        self.btn_right.callback = self.stop_right
-        
-        self.add_item(self.btn_left)
-        self.add_item(self.btn_center)
-        self.add_item(self.btn_right)
+        # ジャックポット中はボタンを赤くする
+        if self.is_jackpot:
+            self.btn_spin.style = discord.ButtonStyle.danger
+            self.btn_spin.label = "JACKPOT レバーを叩く！！"
+            
+        self.add_item(self.btn_spin)
 
-        self.bg_task = asyncio.create_task(self.spin_animation())
+    # 盤面をきれいな文字列にするヘルパー関数
+    def format_grid(self, grid):
+        return "\n".join([f"  [ {row[0]} | {row[1]} | {row[2]} ]" for row in grid])
 
-    async def spin_animation(self):
+    async def start_spin(self, interaction: discord.Interaction):
+        # タイムアウトエラーを防ぐため即座に応答を返す
+        await interaction.response.defer()
+        
+        # 初期状態はすべて回転中
+        grid_state = [["🌀", "🌀", "🌀"] for _ in range(3)]
+        display = self.format_grid(grid_state)
+        
+        # Embedを使ってリッチに表示
+        embed = discord.Embed(title="🎰 スロット スピン中...", color=0x3498db)
+        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**ぐるぐるぐる...**"
+        await self.msg.edit(embed=embed, view=None) # ボタンを消す
+        
+        # 💡 API制限を回避する1.5秒のタメ
+        await asyncio.sleep(1.5) 
+
+        # ─── 左リール停止 ───
+        for r in range(3): grid_state[r][0] = self.final_grid[r][0]
+        display = self.format_grid(grid_state)
+        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**左、停止！**"
+        await self.msg.edit(embed=embed)
+        await asyncio.sleep(1.5)
+
+        # ─── 中リール停止 & リーチ判定 ───
+        is_reach = False
+        for r in range(3): 
+            grid_state[r][1] = self.final_grid[r][1]
+            if grid_state[r][0] == grid_state[r][1]:
+                is_reach = True # 横のラインで2つ揃っていればリーチ！
+
+        display = self.format_grid(grid_state)
+        
+        if is_reach:
+            # リーチ時は赤色にして熱い展開を演出！
+            embed.color = 0xe74c3c 
+            embed.description = f"賭け金: {self.bet}\n\n{display}\n\n🔥 **中、停止！...リーチ！！** 🔥"
+            await self.msg.edit(embed=embed)
+            # 💡 リーチの時はさらに長く（2.5秒）焦らす！
+            await asyncio.sleep(2.5) 
+        else:
+            embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**中、停止！**"
+            await self.msg.edit(embed=embed)
+            await asyncio.sleep(1.5)
+
+        # ─── 右リール停止 & 結果処理 ───
+        for r in range(3): grid_state[r][2] = self.final_grid[r][2]
+        await self.check_finish(grid_state, embed)
+
+    async def check_finish(self, grid_state, embed):
+        win_lines = []
+        for r in range(3):
+            if self.final_grid[r][0] == self.final_grid[r][1] == self.final_grid[r][2]:
+                win_lines.append(self.final_grid[r][0])
+        
+        win_count = len(win_lines)
+        
         try:
-            while self.is_spinning:
-                grid = [
-                    [
-                        random.choice(self.icons) if not self.stopped[c] else self.final_grid[r][c] 
-                        for c in range(3)
-                    ] 
-                    for r in range(3)
-                ]
-                
-                display = "\n".join([f"  [ {row[0]} | {row[1]} | {row[2]} ]" for row in grid])
-                
-                # 🌟 ジャックポット用の特殊表示を作成
-                jp_text = ""
-                streak_text = ""
+            data = get_user_data(self.user_id)
+            res = ""
+            
+            if win_count > 0:
+                if self.seven_icon in win_lines:
+                    slot_data[self.user_id]["seven_streak"] += 1
+                    if slot_data[self.user_id]["seven_streak"] >= 5:
+                        slot_data[self.user_id]["jackpot_until"] = time.time() + 10 
+                        slot_data[self.user_id]["seven_streak"] = 0
+                        res += "\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n🌟 **JACKPOT 突入!!!!** 🌟\n🔥 **これから10秒間ベル確定!!** 🔥\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n\n"
+                else:
+                    slot_data[self.user_id]["seven_streak"] = 0
+                    
+                p = self.bet * (win_count * 5)
                 
                 if self.is_jackpot:
-                    # 残り秒数を計算（小数点第1位まで）
-                    remaining = max(0, slot_data[self.user_id]["jackpot_until"] - time.time())
+                    p = self.bet * 10
+                    res += "✨ **JACKPOT配当!!** ✨\n"
                     
-                    if remaining > 0:
-                        jp_text = f"🚨 **JACKPOT MODE ACTIVE!!** 🚨\n⏳ **残り時間: {remaining:.1f} 秒!!** ⏳\n"
-                        # ジャックポット中はボタンの色を赤(Danger)にして特別感を出す
-                        self.btn_left.style = discord.ButtonStyle.danger
-                        self.btn_center.style = discord.ButtonStyle.danger
-                        self.btn_right.style = discord.ButtonStyle.danger
-                    else:
-                        # 途中で時間が切れた場合の処理
-                        self.is_jackpot = False
-                        jp_text = "💨 *ジャックポットタイム終了...*\n"
-                        self.btn_left.style = discord.ButtonStyle.primary
-                        self.btn_center.style = discord.ButtonStyle.primary
-                        self.btn_right.style = discord.ButtonStyle.primary
-                else:
-                    streak = slot_data[self.user_id]["seven_streak"]
-                    if streak > 0:
-                        streak_text = f"🔥 現在の7連続回数: {streak}/5 🔥\n"
+                data["points"] += p
+                save_user_data(self.user_id, data)
+                res += f"🎉 **大勝利！{win_count}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
+                embed.color = 0xf1c40f # 勝利時は金色
+            else: 
+                slot_data[self.user_id]["seven_streak"] = 0
+                res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
+                embed.color = 0x95a5a6 # ハズレ時はグレー
                 
-                content = f"🎰 **スロット** 🎰\n賭け金: {self.bet}\n\n{jp_text}{streak_text}{display}\n\n👇 **ボタンを押してリールを止めて！**"
-                
-                await self.msg.edit(content=content, view=self)
-                await asyncio.sleep(0.5) 
         except Exception as e:
-            pass
-
-    async def stop_left(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        self.stopped[0] = True
-        self.btn_left.disabled = True
-        await self.check_finish(interaction)
-
-    async def stop_center(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        self.stopped[1] = True
-        self.btn_center.disabled = True
-        await self.check_finish(interaction)
-
-    async def stop_right(self, interaction: discord.Interaction):
-        await interaction.response.defer()
-        self.stopped[2] = True
-        self.btn_right.disabled = True
-        await self.check_finish(interaction)
-
-    async def check_finish(self, interaction: discord.Interaction):
-        await self.msg.edit(view=self)
+            res = f"❌ ゲームは終了しましたが、データの保存に失敗しました: `{e}`"
         
-        if all(self.stopped):
-            self.is_spinning = False
-            self.bg_task.cancel()
-            self.stop()
-            
-            win_lines = []
-            for r in range(3):
-                if self.final_grid[r][0] == self.final_grid[r][1] == self.final_grid[r][2]:
-                    win_lines.append(self.final_grid[r][0])
-            
-            win_count = len(win_lines)
-            
-            try:
-                data = get_user_data(self.user_id)
-                res = ""
-                
-                if win_count > 0:
-                    # 7が揃ったかどうかの判定
-                    if self.seven_icon in win_lines:
-                        slot_data[self.user_id]["seven_streak"] += 1
-                        if slot_data[self.user_id]["seven_streak"] >= 5:
-                            # 🌟 ジャックポット突入演出！
-                            slot_data[self.user_id]["jackpot_until"] = time.time() + 10 # 10秒間
-                            slot_data[self.user_id]["seven_streak"] = 0
-                            res += "\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n"
-                            res += "🌟 **JACKPOT 突入!!!!** 🌟\n"
-                            res += "🔥 **これから10秒間、ベルが確定で揃います!!** 🔥\n"
-                            res += "🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n\n"
-                    else:
-                        slot_data[self.user_id]["seven_streak"] = 0
-                        
-                    p = self.bet * (win_count * 5)
-                    
-                    if self.is_jackpot:
-                        p = self.bet * 10
-                        res += "✨ **JACKPOT配当!!** ✨\n"
-                        
-                    data["points"] += p
-                    save_user_data(self.user_id, data)
-                    res += f"🎉 **大勝利！{win_count}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
-                else: 
-                    slot_data[self.user_id]["seven_streak"] = 0
-                    res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
-                    
-            except Exception as e:
-                res = f"❌ ゲームは終了しましたが、データの保存に失敗しました: `{e}`"
-            
-            final_display = "\n".join([f"  [ {row[0]} | {row[1]} | {row[2]} ]" for row in self.final_grid])
-            await interaction.followup.edit_message(message_id=self.msg.id, content=f"🎰 **スロット 結果** 🎰\n\n{final_display}\n\n{res}", view=None)
+        display = self.format_grid(grid_state)
+        embed.title = "🎰 スロット 結果発表！"
+        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n{res}"
+        
+        await self.msg.edit(embed=embed)
 
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
