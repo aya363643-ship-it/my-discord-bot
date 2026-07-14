@@ -199,37 +199,71 @@ class SlotView(discord.ui.View):
             
         self.is_jackpot = time.time() < slot_data[self.user_id]["jackpot_until"]
         self.icons = ['🎰', '💎', '🔔', '🍒', '🍋', '🍇', '✨', '🍀']
-        
-        # 抽選ロジック
         self.final_grid = self.generate_result()
-        self.btn_spin = discord.ui.Button(label="レバーを叩く！" if not self.is_jackpot else "JACKPOT レバー！", 
-                                          style=discord.ButtonStyle.danger if self.is_jackpot else discord.ButtonStyle.success, 
-                                          emoji="🕹️")
+        
+        self.btn_spin = discord.ui.Button(label="レバーを叩く！", style=discord.ButtonStyle.success, emoji="🕹️")
         self.btn_spin.callback = self.start_spin
         self.add_item(self.btn_spin)
 
     def generate_result(self):
-        # 確率設定
+        # ...（生成ロジックはそのまま）...
         r = random.random() * 100
         if self.is_jackpot:
-            if r < 15: return [[val]*3 for val in ['🎰']*3] # 7の代わりを🎰に
-            if r < 35 + 15: return [[val]*3 for val in ['💎']*3] # 1.5倍用
-            if r < 90 + 35 + 15: return [[val]*3 for val in ['🔔']*3] # 1.2倍用
-            return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
+            if r < 15: return [[val]*3 for val in ['🎰']*3]
+            if r < 50: return [[val]*3 for val in ['💎']*3]
+            return [[val]*3 for val in ['🔔']*3]
         else:
-            if r < 1: return [[val]*3 for val in ['🎰']*3] # 7倍
-            if r < 1 + 1: return [[val]*3 for val in ['💎']*3] # 3倍
-            if r < 1 + 1 + 3: return [[val]*3 for val in ['✨']*3] # 2倍
-            if r < 1 + 1 + 3 + 5: return [[val]*3 for val in ['🍇']*3] # 1.5倍
-            if r < 1 + 1 + 3 + 5 + 10: return [[val]*3 for val in ['🍒']*3] # 1.2倍
+            if r < 1: return [[val]*3 for val in ['🎰']*3]
+            if r < 2: return [[val]*3 for val in ['💎']*3]
+            if r < 5: return [[val]*3 for val in ['✨']*3]
+            if r < 10: return [[val]*3 for val in ['🍇']*3]
+            if r < 20: return [[val]*3 for val in ['🍒']*3]
             return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
+
+    async def start_spin(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        # 1. 回転演出（3回更新）
+        for _ in range(3):
+            temp_grid = [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
+            grid_str = "\n".join([" | ".join(row) for row in temp_grid])
+            embed = discord.Embed(title="🎰 スロット回転中...", description=f"{grid_str}", color=0x3498db)
+            await self.msg.edit(embed=embed)
+            await asyncio.sleep(0.5)
+        
+        # 2. 1秒待機してから結果表示
+        await asyncio.sleep(1)
+        await self.show_result()
+
+    async def show_result(self):
+        lines = self.check_win(self.final_grid)
+        mult = 1.0
+        if '🎰' in lines: mult = 7.0
+        elif '💎' in lines: mult = 3.0
+        elif '✨' in lines: mult = 2.0
+        elif '🍇' in lines: mult = 1.5
+        elif '🍒' in lines: mult = 1.2
+
+        res_text = "残念！はずれ！"
+        if mult > 1.0:
+            win = int(self.bet * mult)
+            data = get_user_data(self.user_id)
+            data["points"] += win
+            save_user_data(self.user_id, data)
+            res_text = f"🎉 {mult}倍的中！ {win}コイン獲得！"
+            
+            if mult == 7.0 and not self.is_jackpot:
+                slot_data[self.user_id]["jackpot_until"] = time.time() + 10
+                res_text += "\n🚨 **JACKPOTモード突入！**"
+
+        grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
+        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=0xf1c40f)
+        await self.msg.edit(embed=embed)
 
     def check_win(self, grid):
         lines = []
-        # 横
         for r in range(3):
             if grid[r][0] == grid[r][1] == grid[r][2]: lines.append(grid[r][0])
-        # 斜め
         if grid[0][0] == grid[1][1] == grid[2][2]: lines.append(grid[0][0])
         if grid[0][2] == grid[1][1] == grid[2][0]: lines.append(grid[0][2])
         return lines
