@@ -316,13 +316,23 @@ class DiceView(discord.ui.View):
         if len(self.p_dice) == 2:
             d_sum, p_sum = sum(self.d_dice), sum(self.p_dice)
             data = get_user_data(self.user_id)
-            if p_sum > d_sum: data["points"] += (self.bet * 2); res = "🎉 勝ち！"
-            elif p_sum < d_sum: res = "💀 負け..."
-            else: data["points"] += self.bet; res = "🤝 引き分け"
+            
+            # 結果に応じた処理とメッセージ作成
+            if p_sum > d_sum:
+                win_amount = self.bet * 2
+                data["points"] += win_amount
+                res = f"🎉 勝ち！ (+{win_amount}コイン)"
+            elif p_sum < d_sum:
+                res = f"💀 負け... (-{self.bet}コイン)"
+            else:
+                data["points"] += self.bet
+                res = f"🤝 引き分け (+0コイン)"
+            
             save_user_data(self.user_id, data)
             
-            # 結果表示（ボタンなし）
-            await self.update_message(f"結果発表！ {res}")
+            # 結果表示（所持金も追加）
+            final_status = f"結果発表！ {res}\n💳 現在の所持金: {data['points']}コイン"
+            await self.update_message(final_status)
             self.stop()
         else:
             await self.update_message("1つ目確定！", show_button=True)
