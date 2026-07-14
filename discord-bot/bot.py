@@ -181,9 +181,11 @@ class BJView(discord.ui.View):
         self.msg = msg
         self.p_hand = [draw_card(), draw_card()]
         self.d_hand = [draw_card(), draw_card()]
+        self.double_down_done = False
 
     async def update_display(self, status, view=None):
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        # ディーラーのカードはターン終了まで1枚隠す
         d_str = f"{card_to_str(self.d_hand[0])}, ❓" if "あなたのターン" in status else ", ".join([card_to_str(c) for c in self.d_hand])
         content = f"🃏 **Blackjack (賭け金:{self.bet})**\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}"
         await self.msg.edit(content=content, view=view)
@@ -191,15 +193,35 @@ class BJView(discord.ui.View):
     @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
     async def hit(self, i: discord.Interaction, button: discord.ui.Button):
         await i.response.defer()
-        # カードを引く演出を追加
         await self.msg.edit(content="🃏 カードを引いています...", view=None)
         await asyncio.sleep(0.8)
-        
         self.p_hand.append(draw_card())
         if calc_score(self.p_hand) > 21:
             await self.finish_game("💀 バースト！負けました...", 0)
         else:
             await self.update_display("あなたのターンです", self)
+
+    @discord.ui.button(label="Double", style=discord.ButtonStyle.success)
+    async def double(self, i: discord.Interaction, button: discord.ui.Button):
+        await i.response.defer()
+        data = get_user_data(self.user_id)
+        if data["points"] < self.bet:
+            await i.followup.send("❌ 所持金が足りずダブルダウンできません！", ephemeral=True)
+            return
+        
+        # 賭け金を倍に
+        data["points"] -= self.bet
+        self.bet *= 2
+        save_user_data(self.user_id, data)
+        
+        await self.msg.edit(content="💰 賭け金を倍にしました！カードを引いています...", view=None)
+        await asyncio.sleep(0.8)
+        self.p_hand.append(draw_card())
+        
+        if calc_score(self.p_hand) > 21:
+            await self.finish_game("💀 バースト！負けました...", 0)
+        else:
+            await self.dealer_turn()
 
     @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
     async def stand(self, i: discord.Interaction, button: discord.ui.Button):
@@ -208,13 +230,17 @@ class BJView(discord.ui.View):
 
     async def dealer_turn(self):
         self.clear_items()
+        # まずディーラーの全カードを見せる演出
+        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+        await self.msg.edit(content=f"🃏 ディーラーのカード公開: {d_str} ({calc_score(self.d_hand)}点)", view=None)
+        await asyncio.sleep(1.5)
+        
         while calc_score(self.d_hand) < 17:
             await self.msg.edit(content=f"🃏 ディーラーが引いています... ({calc_score(self.d_hand)}点)", view=None)
             await asyncio.sleep(1.2)
             self.d_hand.append(draw_card())
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
-        # 結果の収支がわかりやすいように計算
         if d_sc > 21 or p_sc > d_sc: await self.finish_game(f"🎉 **あなたの勝ち！**\n💰 利益: +{self.bet}コイン", self.bet * 2)
         elif p_sc == d_sc: await self.finish_game(f"🤝 **引き分け**\n💰 収支: ±0コイン (返金)", self.bet)
         else: await self.finish_game(f"💀 **負けました...**\n📉 損失: -{self.bet}コイン", 0)
