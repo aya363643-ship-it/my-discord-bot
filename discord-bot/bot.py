@@ -361,5 +361,17 @@ async def blackjack(ctx):
 async def dice(ctx):
     bet = await get_bet(ctx)
     if bet: msg = await ctx.send("🎲 準備中..."); v = DiceView(bet, ctx.author.id, msg); await msg.edit(view=v); await v.start_dice()
-
+# ─── 権限者用コマンド ───
+@bot.command()
+@is_allowed_user() # 権限があるユーザーのみ実行可能
+async def give_points(ctx, member: discord.Member, amount: int):
+    if amount <= 0:
+        await ctx.send("❌ 正の数値を入力してください。")
+        return
+    
+    data = get_user_data(member.id)
+    data["points"] += amount
+    save_user_data(member.id, data)
+    
+    await ctx.send(f"✅ {member.mention} に **{amount}コイン** を付与しました！\n現在の所持金: {data['points']}コイン")
 bot.run(os.getenv('TOKEN'))
