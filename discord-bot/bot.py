@@ -184,6 +184,9 @@ def calc_score(hand):
 # ─── スロット用追加データ（グローバル） ───
 slot_data = {}
 
+# ─── スロット用データ ───
+slot_data = {}
+
 class SlotView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
@@ -191,131 +194,79 @@ class SlotView(discord.ui.View):
         self.user_id = str(user_id)
         self.msg = msg
         
-        # ユーザーデータの初期化
         if self.user_id not in slot_data:
-            slot_data[self.user_id] = {"seven_streak": 0, "jackpot_until": 0}
+            slot_data[self.user_id] = {"jackpot_until": 0}
             
-        # 🌟 ジャックポット中かどうかの判定
-        current_time = time.time()
-        self.is_jackpot = current_time < slot_data[self.user_id]["jackpot_until"]
-
-        self.icons = ['🎰', '💎', '🔔', '🔔', '🔔', '🍒', '🍋', '🍇', '✨', '🍀']
-        self.seven_icon = '🎰'
-        self.bell_icon = '🔔'
+        self.is_jackpot = time.time() < slot_data[self.user_id]["jackpot_until"]
+        self.icons = ['🎰', '💎', '🔔', '🍒', '🍋', '🍇', '✨', '🍀']
         
-        # 最終的なリールの結果を先に決めておく
-        if self.is_jackpot:
-            self.final_grid = [[self.bell_icon for _ in range(3)] for _ in range(3)]
-        else:
-            self.final_grid = [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
-
-        # スピン開始ボタン
-        self.btn_spin = discord.ui.Button(label="レバーを叩く！", style=discord.ButtonStyle.success, emoji="🕹️")
+        # 抽選ロジック
+        self.final_grid = self.generate_result()
+        self.btn_spin = discord.ui.Button(label="レバーを叩く！" if not self.is_jackpot else "JACKPOT レバー！", 
+                                          style=discord.ButtonStyle.danger if self.is_jackpot else discord.ButtonStyle.success, 
+                                          emoji="🕹️")
         self.btn_spin.callback = self.start_spin
-        
-        # ジャックポット中はボタンを赤くする
-        if self.is_jackpot:
-            self.btn_spin.style = discord.ButtonStyle.danger
-            self.btn_spin.label = "JACKPOT レバーを叩く！！"
-            
         self.add_item(self.btn_spin)
 
-    # 盤面をきれいな文字列にするヘルパー関数
-    def format_grid(self, grid):
-        return "\n".join([f"  [ {row[0]} | {row[1]} | {row[2]} ]" for row in grid])
+    def generate_result(self):
+        # 確率設定
+        r = random.random() * 100
+        if self.is_jackpot:
+            if r < 15: return [[val]*3 for val in ['🎰']*3] # 7の代わりを🎰に
+            if r < 35 + 15: return [[val]*3 for val in ['💎']*3] # 1.5倍用
+            if r < 90 + 35 + 15: return [[val]*3 for val in ['🔔']*3] # 1.2倍用
+            return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
+        else:
+            if r < 1: return [[val]*3 for val in ['🎰']*3] # 7倍
+            if r < 1 + 1: return [[val]*3 for val in ['💎']*3] # 3倍
+            if r < 1 + 1 + 3: return [[val]*3 for val in ['✨']*3] # 2倍
+            if r < 1 + 1 + 3 + 5: return [[val]*3 for val in ['🍇']*3] # 1.5倍
+            if r < 1 + 1 + 3 + 5 + 10: return [[val]*3 for val in ['🍒']*3] # 1.2倍
+            return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
+
+    def check_win(self, grid):
+        lines = []
+        # 横
+        for r in range(3):
+            if grid[r][0] == grid[r][1] == grid[r][2]: lines.append(grid[r][0])
+        # 斜め
+        if grid[0][0] == grid[1][1] == grid[2][2]: lines.append(grid[0][0])
+        if grid[0][2] == grid[1][1] == grid[2][0]: lines.append(grid[0][2])
+        return lines
 
     async def start_spin(self, interaction: discord.Interaction):
-        # タイムアウトエラーを防ぐため即座に応答を返す
         await interaction.response.defer()
+        embed = discord.Embed(title="🎰 スロット演出中", description="ぐるぐる...ぐるぐる...", color=0x3498db)
+        await self.msg.edit(embed=embed, view=None)
         
-        # 初期状態はすべて回転中
-        grid_state = [["🌀", "🌀", "🌀"] for _ in range(3)]
-        display = self.format_grid(grid_state)
-        
-        # Embedを使ってリッチに表示
-        embed = discord.Embed(title="🎰 スロット スピン中...", color=0x3498db)
-        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**ぐるぐるぐる...**"
-        await self.msg.edit(embed=embed, view=None) # ボタンを消す
-        
-        # 💡 API制限を回避する1.5秒のタメ
-        await asyncio.sleep(1.5) 
-
-        # ─── 左リール停止 ───
-        for r in range(3): grid_state[r][0] = self.final_grid[r][0]
-        display = self.format_grid(grid_state)
-        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**左、停止！**"
-        await self.msg.edit(embed=embed)
         await asyncio.sleep(1.5)
+        # 演出省略：最終結果を表示
+        await self.show_result()
 
-        # ─── 中リール停止 & リーチ判定 ───
-        is_reach = False
-        for r in range(3): 
-            grid_state[r][1] = self.final_grid[r][1]
-            if grid_state[r][0] == grid_state[r][1]:
-                is_reach = True # 横のラインで2つ揃っていればリーチ！
+    async def show_result(self):
+        lines = self.check_win(self.final_grid)
+        mult = 1.0
+        if '🎰' in lines: mult = 7.0
+        elif '💎' in lines: mult = 3.0
+        elif '✨' in lines: mult = 2.0
+        elif '🍇' in lines: mult = 1.5
+        elif '🍒' in lines: mult = 1.2
 
-        display = self.format_grid(grid_state)
-        
-        if is_reach:
-            # リーチ時は赤色にして熱い展開を演出！
-            embed.color = 0xe74c3c 
-            embed.description = f"賭け金: {self.bet}\n\n{display}\n\n🔥 **中、停止！...リーチ！！** 🔥"
-            await self.msg.edit(embed=embed)
-            # 💡 リーチの時はさらに長く（2.5秒）焦らす！
-            await asyncio.sleep(2.5) 
-        else:
-            embed.description = f"賭け金: {self.bet}\n\n{display}\n\n**中、停止！**"
-            await self.msg.edit(embed=embed)
-            await asyncio.sleep(1.5)
-
-        # ─── 右リール停止 & 結果処理 ───
-        for r in range(3): grid_state[r][2] = self.final_grid[r][2]
-        await self.check_finish(grid_state, embed)
-
-    async def check_finish(self, grid_state, embed):
-        win_lines = []
-        for r in range(3):
-            if self.final_grid[r][0] == self.final_grid[r][1] == self.final_grid[r][2]:
-                win_lines.append(self.final_grid[r][0])
-        
-        win_count = len(win_lines)
-        
-        try:
+        res_text = "残念！はずれ！"
+        if mult > 1.0:
+            win = int(self.bet * mult)
             data = get_user_data(self.user_id)
-            res = ""
+            data["points"] += win
+            save_user_data(self.user_id, data)
+            res_text = f"🎉 {mult}倍的中！ {win}コイン獲得！"
             
-            if win_count > 0:
-                if self.seven_icon in win_lines:
-                    slot_data[self.user_id]["seven_streak"] += 1
-                    if slot_data[self.user_id]["seven_streak"] >= 5:
-                        slot_data[self.user_id]["jackpot_until"] = time.time() + 10 
-                        slot_data[self.user_id]["seven_streak"] = 0
-                        res += "\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n🌟 **JACKPOT 突入!!!!** 🌟\n🔥 **これから10秒間ベル確定!!** 🔥\n🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n\n"
-                else:
-                    slot_data[self.user_id]["seven_streak"] = 0
-                    
-                p = self.bet * (win_count * 5)
-                
-                if self.is_jackpot:
-                    p = self.bet * 10
-                    res += "✨ **JACKPOT配当!!** ✨\n"
-                    
-                data["points"] += p
-                save_user_data(self.user_id, data)
-                res += f"🎉 **大勝利！{win_count}ライン的中！**\n💰 **{p}コイン獲得！** (所持金: {data['points']})"
-                embed.color = 0xf1c40f # 勝利時は金色
-            else: 
-                slot_data[self.user_id]["seven_streak"] = 0
-                res = f"💀 **残念！はずれ！** (所持金: {data['points']})"
-                embed.color = 0x95a5a6 # ハズレ時はグレー
-                
-        except Exception as e:
-            res = f"❌ ゲームは終了しましたが、データの保存に失敗しました: `{e}`"
-        
-        display = self.format_grid(grid_state)
-        embed.title = "🎰 スロット 結果発表！"
-        embed.description = f"賭け金: {self.bet}\n\n{display}\n\n{res}"
-        
+            # ジャックポット判定（7が揃ったら）
+            if mult == 7.0 and not self.is_jackpot:
+                slot_data[self.user_id]["jackpot_until"] = time.time() + 10
+                res_text += "\n🚨 **JACKPOTモード突入！**"
+
+        grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
+        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=0xf1c40f)
         await self.msg.edit(embed=embed)
 
 class BJView(discord.ui.View):
