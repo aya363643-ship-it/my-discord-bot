@@ -187,12 +187,24 @@ class BJView(discord.ui.View):
             return False
         return True
 
-    async def start_game(self):
-        await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\nカードを配っています...", view=None)
+async def start_game(self):
+        # 演出用：最初はカードの空文字からスタート
+        self.p_hand = []
+        self.d_hand = []
+        
+        # 2枚ずつ配るアニメーション
         for i in range(2):
             await asyncio.sleep(0.8)
             self.p_hand.append(draw_card())
             self.d_hand.append(draw_card())
+            
+            p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+            d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+            
+            # ここで都度 edit を行い、演出を見せる
+            await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\nカードを配っています...\nディーラー: {d_str}\nあなた: {p_str}")
+        
+        # 最後にボタンを表示してターンを開始
         await self.update("あなたのターンです！")
 
     async def update(self, status=""):
