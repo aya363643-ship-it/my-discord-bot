@@ -255,33 +255,77 @@ class BJView(discord.ui.View):
 class DiceView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
-        self.bet = bet; self.user_id = str(user_id); self.msg = msg; self.dice_map = {1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅'}; self.d_dice = []; self.p_dice = []
+        self.bet = bet
+        self.user_id = str(user_id)
+        self.msg = msg
+        self.dice_map = {1: '⚀', 2: '⚁', 3: '⚂', 4: '⚃', 5: '⚄', 6: '⚅'}
+        self.d_dice = []
+        self.p_dice = []
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if str(interaction.user.id) != self.user_id: await interaction.response.send_message("❌ これはあなたのゲームではありません！", ephemeral=True); return False
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ これはあなたのゲームではありません！", ephemeral=True)
+            return False
         return True
-    async def roll_animation(self, label, is_dealer):
+
+    # 演出中にボタンを維持するためのヘルパー
+    async def update_message(self, status, show_button=False):
         self.clear_items()
+        d_str = " ".join([self.dice_map[n] for n in self.d_dice])
+        p_str = " ".join([self.dice_map[n] for n in self.p_dice])
+        d_score = sum(self.d_dice)
+        p_score = sum(self.p_dice)
+        
+        content = (f"🎲 **勝負！**\n"
+                   f"ディーラー: {d_str} ({d_score}点)\n"
+                   f"あなた: {p_str} ({p_score}点)\n\n"
+                   f"【状態】: {status}")
+        
+        if show_button:
+            count_p = len(self.p_dice) + 1
+            btn = discord.ui.Button(label=f"{count_p}つ目を振る！", style=discord.ButtonStyle.success)
+            btn.callback = self.roll
+            self.add_item(btn)
+            
+        await self.msg.edit(content=content, view=self)
+
+    async def roll_animation(self, label, is_dealer):
+        # 演出中はボタンを消した状態で一時的に更新
         for _ in range(5):
-            temp_n = random.randint(1, 6); d_str = " ".join([self.dice_map[n] for n in self.d_dice]); p_str = " ".join([self.dice_map[n] for n in self.p_dice])
-            await self.msg.edit(content=f"🎲 **勝負！**\nディーラー: {d_str} {'🎲' if is_dealer else ''}\nあなた: {p_str} {'🎲' if not is_dealer else ''}\n\n🎲 **{label}**", view=self); await asyncio.sleep(0.3)
+            temp_n = random.randint(1, 6)
+            # 現在の状態に一時的なダイスを加えて表示
+            temp_d = self.d_dice + ([temp_n] if is_dealer else [])
+            temp_p = self.p_dice + ([temp_n] if not is_dealer else [])
+            
+            d_str = " ".join([self.dice_map[n] for n in temp_d])
+            p_str = " ".join([self.dice_map[n] for n in temp_p])
+            
+            await self.msg.edit(content=f"🎲 **勝負！**\nディーラー: {d_str}\nあなた: {p_str}\n\n🎲 **{label}**")
+            await asyncio.sleep(0.3)
         return random.randint(1, 6)
+
     async def start_dice(self):
-        self.d_dice.append(await self.roll_animation("ディーラー：1つ目...", True)); self.d_dice.append(await self.roll_animation("ディーラー：2つ目...", True))
-        await self.update_view("ディーラー確定！")
-    async def update_view(self, status):
-        count_p = len(self.p_dice) + 1
-        self.clear_items(); self.add_item(discord.ui.Button(label=f"{count_p}つ目を振る！", style=discord.ButtonStyle.success)).callback = self.roll
-        await self.msg.edit(content=f"🎲 **勝負！**\nディーラー: {' '.join([self.dice_map[n] for n in self.d_dice])}\nあなた: {' '.join([self.dice_map[n] for n in self.p_dice])}\n\n【状態】: {status}", view=self)
+        self.d_dice.append(await self.roll_animation("ディーラー：1つ目...", True))
+        self.d_dice.append(await self.roll_animation("ディーラー：2つ目...", True))
+        await self.update_message("ディーラー確定！", show_button=True)
+
     async def roll(self, i: discord.Interaction):
-        await i.response.defer(); self.p_dice.append(await self.roll_animation("あなた：振っています...", False))
+        await i.response.defer()
+        self.p_dice.append(await self.roll_animation("あなた：振っています...", False))
+        
         if len(self.p_dice) == 2:
-            d_sum, p_sum = sum(self.d_dice), sum(self.p_dice); data = get_user_data(self.user_id)
+            d_sum, p_sum = sum(self.d_dice), sum(self.p_dice)
+            data = get_user_data(self.user_id)
             if p_sum > d_sum: data["points"] += (self.bet * 2); res = "🎉 勝ち！"
             elif p_sum < d_sum: res = "💀 負け..."
             else: data["points"] += self.bet; res = "🤝 引き分け"
             save_user_data(self.user_id, data)
-            await i.edit_original_response(content=f"🎲 **結果！**\nディーラー: {sum(self.d_dice)}点\nあなた: {sum(self.p_dice)}点\n\n{res}", view=None); self.stop()
-        else: await self.update_view("1つ目確定！")
+            
+            # 結果表示（ボタンなし）
+            await self.update_message(f"結果発表！ {res}")
+            self.stop()
+        else:
+            await self.update_message("1つ目確定！", show_button=True)
 
 # ─── コマンド ───
 async def get_bet(ctx):
