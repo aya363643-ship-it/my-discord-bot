@@ -191,6 +191,10 @@ class BJView(discord.ui.View):
     @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
     async def hit(self, i: discord.Interaction, button: discord.ui.Button):
         await i.response.defer()
+        # カードを引く演出を追加
+        await self.msg.edit(content="🃏 カードを引いています...", view=None)
+        await asyncio.sleep(0.8)
+        
         self.p_hand.append(draw_card())
         if calc_score(self.p_hand) > 21:
             await self.finish_game("💀 バースト！負けました...", 0)
@@ -210,9 +214,10 @@ class BJView(discord.ui.View):
             self.d_hand.append(draw_card())
         
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
-        if d_sc > 21 or p_sc > d_sc: await self.finish_game(f"🎉 あなたの勝ち！ (+{self.bet}コイン利益)", self.bet * 2)
-        elif p_sc == d_sc: await self.finish_game(f"🤝 引き分け (返金)", self.bet)
-        else: await self.finish_game(f"💀 負けました... (-{self.bet}コイン)", 0)
+        # 結果の収支がわかりやすいように計算
+        if d_sc > 21 or p_sc > d_sc: await self.finish_game(f"🎉 **あなたの勝ち！**\n💰 利益: +{self.bet}コイン", self.bet * 2)
+        elif p_sc == d_sc: await self.finish_game(f"🤝 **引き分け**\n💰 収支: ±0コイン (返金)", self.bet)
+        else: await self.finish_game(f"💀 **負けました...**\n📉 損失: -{self.bet}コイン", 0)
 
     async def finish_game(self, result_text, payout):
         self.clear_items()
@@ -222,7 +227,7 @@ class BJView(discord.ui.View):
         
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-        final_msg = f"{result_text}\n\nあなた: {p_str} ({calc_score(self.p_hand)}点)\nディーラー: {d_str} ({calc_score(self.d_hand)}点)\n💳 所持金: {data['points']}コイン"
+        final_msg = f"{result_text}\n\nあなた: {p_str} ({calc_score(self.p_hand)}点)\nディーラー: {d_str} ({calc_score(self.d_hand)}点)\n💳 現在の所持金: {data['points']}コイン"
         await self.msg.edit(content=final_msg, view=None)
         self.stop()
 
