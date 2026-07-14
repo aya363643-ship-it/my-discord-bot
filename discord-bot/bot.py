@@ -173,6 +173,7 @@ class SlotView(discord.ui.View):
         return lines
 
 # ─── Blackjack View ───
+# ─── Blackjack View ───
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=60.0)
@@ -220,20 +221,23 @@ class BJView(discord.ui.View):
     @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
     async def stand(self, i: discord.Interaction, button: discord.ui.Button):
         await i.response.defer()
-        # スタンド後にカードを全て見せる
-        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
-        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
-        await self.msg.edit(content=f"🃏 **Standしました**\nディーラー: {d_str} ({calc_score(self.d_hand)}点)\nあなた: {p_str} ({calc_score(self.p_hand)}点)\n\nこれから結果発表へ移動します...", view=None)
-        await asyncio.sleep(2.0)
         await self.dealer_turn()
 
     async def dealer_turn(self):
         self.clear_items()
+        # まずディーラーが引く演出
         while calc_score(self.d_hand) < 17:
             await self.msg.edit(content=f"🃏 ディーラーが引いています... ({calc_score(self.d_hand)}点)", view=None)
             await asyncio.sleep(1.2)
             self.d_hand.append(draw_card())
         
+        # 引き終わった後にすべて見せて結果へ移動する演出
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+        await self.msg.edit(content=f"🃏 **ディーラーのターン終了**\nディーラー: {d_str} ({calc_score(self.d_hand)}点)\nあなた: {p_str} ({calc_score(self.p_hand)}点)\n\nすべてのカードを確認しました。結果に移動します...", view=None)
+        await asyncio.sleep(2.5)
+        
+        # 最終判定
         d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
         if d_sc > 21 or p_sc > d_sc: await self.finish_game(f"🎉 **あなたの勝ち！**\n💰 利益: +{self.bet}コイン", self.bet * 2)
         elif p_sc == d_sc: await self.finish_game(f"🤝 **引き分け**\n💰 収支: ±0コイン (返金)", self.bet)
