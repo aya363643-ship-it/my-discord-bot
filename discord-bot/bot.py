@@ -190,25 +190,21 @@ class BJView(discord.ui.View):
     async def start_game(self):
         self.p_hand = []
         self.d_hand = []
-        
-        # 2枚ずつ配る演出
-        for i in range(2):
-            await asyncio.sleep(0.8)
-            self.p_hand.append(draw_card())
-            self.d_hand.append(draw_card())
-            
-            p_str = ", ".join([card_to_str(c) for c in self.p_hand])
-            d_str = f"{card_to_str(self.d_hand[0])} , ❓"
-            
-            await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\nカードを配っています... 🎴\nディーラー: {d_str}\nあなた: {p_str}")
-        
+        # 合計4枚配る演出（交互に表示）
+        for _ in range(2):
+            for hand, name in [(self.p_hand, "あなた"), (self.d_hand, "ディーラー")]:
+                await asyncio.sleep(0.6)
+                hand.append(draw_card())
+                p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+                d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+                await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\n{name}にカードを配っています... 🎴\nディーラー: {d_str}\nあなた: {p_str}")
         await self.update("あなたのターンです！")
 
     async def update(self, status=""):
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         d_str = f"{card_to_str(self.d_hand[0])} , ❓"
-        
         self.clear_items()
+        
         hit_btn = discord.ui.Button(label="Hit", style=discord.ButtonStyle.primary)
         hit_btn.callback = self.hit
         self.add_item(hit_btn)
@@ -225,47 +221,53 @@ class BJView(discord.ui.View):
         await self.msg.edit(content=f"🃏 **Blackjack**\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}", view=self)
 
     async def hit(self, i: discord.Interaction):
-        self.can_double = False; card = draw_card(); self.p_hand.append(card); await i.response.defer()
+        await i.response.defer()
+        self.can_double = False
+        await self.msg.edit(content="🃏 カードを引いています...", view=None)
+        await asyncio.sleep(0.8)
+        self.p_hand.append(draw_card())
         if calc_score(self.p_hand) > 21:
-            await self.finish_game(i, "💀 **バースト！負けました...**", -self.bet)
+            await self.finish_game("💀 **バースト！負けました...**", -self.bet)
         else: await self.update()
 
-    async def stand(self, i: discord.Interaction): await i.response.defer(); await self.stop_game(i)
+    async def stand(self, i: discord.Interaction):
+        await i.response.defer()
+        await self.dealer_turn()
 
     async def double(self, i: discord.Interaction):
         data = get_user_data(self.user_id)
         if data["points"] < self.bet: await i.response.send_message("❌ 所持金不足！", ephemeral=True); return
-        data["points"] -= self.bet; save_user_data(self.user_id, data); self.bet *= 2; card = draw_card(); self.p_hand.append(card)
+        data["points"] -= self.bet; save_user_data(self.user_id, data)
+        self.bet *= 2
+        await i.response.defer()
+        await self.msg.edit(content="🃏 ダブルダウン！カードを1枚引きます...", view=None)
+        await asyncio.sleep(0.8)
+        self.p_hand.append(draw_card())
         if calc_score(self.p_hand) > 21:
-            await self.finish_game(i, "💀 **バースト！負けました...**", -self.bet)
-        else: await self.stop_game(i)
+            await self.finish_game("💀 **バースト！負けました...**", -self.bet)
+        else: await self.dealer_turn()
 
-    async def stop_game(self, i: discord.Interaction):
-        while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
-        d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
+    async def dealer_turn(self):
+        await self.msg.edit(content="🃏 ディーラーのターンです...", view=None)
+        while calc_score(self.d_hand) < 17:
+            await asyncio.sleep(1.0)
+            self.d_hand.append(draw_card())
+            d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+            await self.msg.edit(content=f"🃏 ディーラーが引いています...\nディーラー: {d_str} ({calc_score(self.d_hand)}点)")
         
-        if d_sc > 21 or p_sc > d_sc:
-            win_amount = self.bet * 2
-            await self.finish_game(i, f"🎉 **あなたの勝ち！ (+{win_amount}コイン)**", win_amount)
-        elif p_sc == d_sc:
-            await self.finish_game(i, f"🤝 **引き分け (+{self.bet}コイン返金)**", self.bet)
-        else:
-            await self.finish_game(i, f"💀 **負けました... (-{self.bet}コイン)**", 0)
+        d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
+        if d_sc > 21 or p_sc > d_sc: await self.finish_game(f"🎉 **あなたの勝ち！ (+{self.bet}コイン利益)**", self.bet * 2)
+        elif p_sc == d_sc: await self.finish_game(f"🤝 **引き分け (返金)**", self.bet)
+        else: await self.finish_game(f"💀 **負けました... (-{self.bet}コイン)**", 0)
 
-    async def finish_game(self, i: discord.Interaction, result_text, payout):
+    async def finish_game(self, result_text, payout):
         data = get_user_data(self.user_id)
         if payout > 0: data["points"] += payout
         save_user_data(self.user_id, data)
-        
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
-        d_str_final = ", ".join([card_to_str(c) for c in self.d_hand])
-        
-        final_msg = (f"🃏 **Blackjack 結果**\n\n{result_text}\n"
-                     f"あなた: {p_str} ({calc_score(self.p_hand)}点)\n"
-                     f"ディーラー: {d_str_final} ({calc_score(self.d_hand)}点)\n"
-                     f"💳 現在の所持金: {data['points']}コイン")
-        
-        await i.edit_original_response(content=final_msg, view=None)
+        d_str = ", ".join([card_to_str(c) for c in self.d_hand])
+        final_msg = f"{result_text}\n\nあなた: {p_str} ({calc_score(self.p_hand)}点)\nディーラー: {d_str} ({calc_score(self.d_hand)}点)\n💳 所持金: {data['points']}コイン"
+        await self.msg.edit(content=final_msg, view=None)
         self.stop()
 
 class DiceView(discord.ui.View):
