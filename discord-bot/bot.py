@@ -174,33 +174,64 @@ class SlotView(discord.ui.View):
 class BJView(discord.ui.View):
     def __init__(self, bet, user_id, msg):
         super().__init__(timeout=300.0)
-        self.bet = bet; self.user_id = str(user_id); self.msg = msg; self.p_hand = []; self.d_hand = []; self.can_double = True
+        self.bet = bet
+        self.user_id = str(user_id)
+        self.msg = msg
+        self.p_hand = []
+        self.d_hand = []
+        self.can_double = True
+
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if str(interaction.user.id) != self.user_id: await interaction.response.send_message("❌ これはあなたのゲームではありません！", ephemeral=True); return False
+        if str(interaction.user.id) != self.user_id:
+            await interaction.response.send_message("❌ これはあなたのゲームではありません！", ephemeral=True)
+            return False
         return True
+
     async def start_game(self):
         await self.msg.edit(content=f"🃏 **Blackjack (賭け金:{self.bet})**\nカードを配っています...", view=None)
         for i in range(2):
-            await asyncio.sleep(0.8); self.p_hand.append(draw_card()); self.d_hand.append(draw_card())
+            await asyncio.sleep(0.8)
+            self.p_hand.append(draw_card())
+            self.d_hand.append(draw_card())
         await self.update("あなたのターンです！")
+
     async def update(self, status=""):
-        p_str = ", ".join([card_to_str(c) for c in self.p_hand]); d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        d_str = f"{card_to_str(self.d_hand[0])} , ❓"
+        
         self.clear_items()
-        self.add_item(discord.ui.Button(label="Hit", style=discord.ButtonStyle.primary, custom_id="hit")).callback = self.hit
-        self.add_item(discord.ui.Button(label="Stand", style=discord.ButtonStyle.secondary, custom_id="stand")).callback = self.stand
-        if self.can_double: self.add_item(discord.ui.Button(label="Double", style=discord.ButtonStyle.success, custom_id="double")).callback = self.double
+        
+        # ボタンを作成し、その場でcallbackを割り当てる
+        hit_btn = discord.ui.Button(label="Hit", style=discord.ButtonStyle.primary, custom_id="hit")
+        hit_btn.callback = self.hit
+        self.add_item(hit_btn)
+        
+        stand_btn = discord.ui.Button(label="Stand", style=discord.ButtonStyle.secondary, custom_id="stand")
+        stand_btn.callback = self.stand
+        self.add_item(stand_btn)
+        
+        if self.can_double:
+            double_btn = discord.ui.Button(label="Double", style=discord.ButtonStyle.success, custom_id="double")
+            double_btn.callback = self.double
+            self.add_item(double_btn)
+        
         await self.msg.edit(content=f"🃏 **Blackjack**\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}", view=self)
+
+    # --- 以下は変更なし ---
     async def hit(self, i: discord.Interaction):
         self.can_double = False; card = draw_card(); self.p_hand.append(card); await i.response.defer()
         if calc_score(self.p_hand) > 21: await i.edit_original_response(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None); self.stop()
         else: await self.update()
+
     async def stand(self, i: discord.Interaction): await i.response.defer(); await self.stop_game(i)
+
     async def double(self, i: discord.Interaction):
         data = get_user_data(self.user_id)
         if data["points"] < self.bet: await i.response.send_message("❌ 所持金不足！", ephemeral=True); return
         data["points"] -= self.bet; save_user_data(self.user_id, data); self.bet *= 2; card = draw_card(); self.p_hand.append(card)
         if calc_score(self.p_hand) > 21: await i.response.edit_message(content=f"💀 **バースト！** (合計: {calc_score(self.p_hand)}点)", view=None); self.stop()
         else: await self.stop_game(i)
+
     async def stop_game(self, i: discord.Interaction):
         p_str = ", ".join([card_to_str(c) for c in self.p_hand])
         while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
