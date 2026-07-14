@@ -220,17 +220,20 @@ class SlotView(discord.ui.View):
             return [[random.choice(self.icons) for _ in range(3)] for _ in range(3)]
 
     async def start_spin(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        # ボタンを無効化して更新
+        self.btn_spin.disabled = True
+        await interaction.response.edit_message(view=self)
         
-        # 演出：左から順番に確定していくようなアニメーション
+        # 演出：左から順番に確定していくアニメーション
         current_grid = [["❓", "❓", "❓"], ["❓", "❓", "❓"], ["❓", "❓", "❓"]]
         
         for col in range(3):
-            for _ in range(3): # 各列で3回ランダム表示
+            for _ in range(3): 
                 for row in range(3):
                     current_grid[row][col] = random.choice(self.icons)
                 grid_str = "\n".join([" | ".join(row) for row in current_grid])
-                await self.msg.edit(embed=discord.Embed(title="🎰 スロット回転中...", description=f"{grid_str}", color=0x3498db))
+                embed = discord.Embed(title="🎰 スロット回転中...", description=f"{grid_str}", color=0x3498db)
+                await self.msg.edit(embed=embed)
                 await asyncio.sleep(0.3)
             # 1列ずつ確定
             for row in range(3):
@@ -265,6 +268,8 @@ class SlotView(discord.ui.View):
 
         grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
         embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_msg}\n💳 現在の所持金: {data['points']}コイン", color=color)
+        
+        # 最終結果表示時はViewをNoneにしてボタンを消す
         await self.msg.edit(embed=embed, view=None)
 
     def check_win(self, grid):
