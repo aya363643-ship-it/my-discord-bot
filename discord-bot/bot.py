@@ -63,16 +63,24 @@ async def check_vc_rewards():
             for member in vc.members:
                 if member.bot: continue
                 user_id = member.id
-                if user_id not in vc_durations: vc_durations[user_id] = 0
-                vc_durations[user_id] += 1
-                if vc_durations[user_id] >= 30:
+                
+                # vc_durationsに存在しない場合は初期化
+                if user_id not in vc_durations: 
                     vc_durations[user_id] = 0
-                    try:
-                        data = get_user_data(user_id)
-                        data["points"] += 50
-                        save_user_data(user_id, data)
-                        channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-                        if channel: await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
+                
+                vc_durations[user_id] += 1
+                
+                # 30分（30回）に達したか判定
+                if vc_durations[user_id] >= 30:
+                    vc_durations[user_id] = 0 # リセット
+                    
+                    data = get_user_data(user_id)
+                    data["points"] += 50
+                    save_user_data(user_id, data)
+                    
+                    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                    if channel:
+                        await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
                     except Exception as e: print(f"VCエラー: {e}")
 
 @bot.event
