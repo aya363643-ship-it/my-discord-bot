@@ -206,7 +206,6 @@ class SlotView(discord.ui.View):
         self.add_item(self.btn_spin)
 
     def generate_result(self):
-        # ...（生成ロジックはそのまま）...
         r = random.random() * 100
         if self.is_jackpot:
             if r < 15: return [[val]*3 for val in ['🎰']*3]
@@ -238,26 +237,30 @@ class SlotView(discord.ui.View):
     async def show_result(self):
         lines = self.check_win(self.final_grid)
         mult = 1.0
+        # 配当倍率の判定
         if '🎰' in lines: mult = 7.0
         elif '💎' in lines: mult = 3.0
         elif '✨' in lines: mult = 2.0
         elif '🍇' in lines: mult = 1.5
         elif '🍒' in lines: mult = 1.2
 
-        res_text = "残念！はずれ！"
+        res_text = "💀 残念！はずれ！"
         if mult > 1.0:
             win = int(self.bet * mult)
             data = get_user_data(self.user_id)
             data["points"] += win
             save_user_data(self.user_id, data)
-            res_text = f"🎉 {mult}倍的中！ {win}コイン獲得！"
+            res_text = f"🎉 {mult}倍的中！\n💰 {win}コイン獲得しました！\n💳 現在の所持金: {data['points']}コイン"
             
             if mult == 7.0 and not self.is_jackpot:
                 slot_data[self.user_id]["jackpot_until"] = time.time() + 10
                 res_text += "\n🚨 **JACKPOTモード突入！**"
+        else:
+            data = get_user_data(self.user_id)
+            res_text = f"💀 残念！はずれ！\n📉 損失: {self.bet}コイン\n💳 現在の所持金: {data['points']}コイン"
 
         grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
-        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=0xf1c40f)
+        embed = discord.Embed(title="🎰 結果発表", description=f"{grid_str}\n\n{res_text}", color=0xf1c40f if mult > 1.0 else 0x95a5a6)
         await self.msg.edit(embed=embed)
 
     def check_win(self, grid):
