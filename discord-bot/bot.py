@@ -74,15 +74,16 @@ async def check_vc_rewards():
                 if vc_durations[user_id] >= 30:
                     vc_durations[user_id] = 0 # リセット
                     
-                    data = get_user_data(user_id)
-                    data["points"] += 50
-                    save_user_data(user_id, data)
-                    
-                    channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
-                    if channel:
-                        await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
-                except Exception as e: 
-                    print(f"VCエラー: {e}")
+                    try:
+                        data = get_user_data(user_id)
+                        data["points"] += 50
+                        save_user_data(user_id, data)
+                        
+                        channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                        if channel:
+                            await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
+                    except Exception as e: 
+                        print(f"VCエラー: {e}")
 
 @bot.event
 async def on_voice_state_update(member, before, after):
