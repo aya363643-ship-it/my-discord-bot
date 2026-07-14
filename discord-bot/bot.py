@@ -81,7 +81,7 @@ async def check_vc_rewards():
                     channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
                     if channel:
                         await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
-                except Exception as e: 
+                    except Exception as e: 
                     print(f"VCエラー: {e}")
 
 @bot.event
