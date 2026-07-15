@@ -96,6 +96,46 @@ async def check_vc_rewards():
                         if channel: await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
                     except Exception as e: print(f"VCエラー: {e}")
 
+# ─── マイクラ残高の自動反映タスク ───
+@tasks.loop(minutes=1)  # 5分ごとにマイクラの残高をチェック
+async def auto_sync_from_mc():
+    # 登録されている全ユーザーをMongoDBから取得
+    all_users = collection.find({"mc_name": {"$ne": None}})
+    
+    try:
+        with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT) as rcon:
+            for user in all_users:
+                mc_name = user["mc_name"]
+                # マイクラの残高を取得 (/bal コマンドの出力形式に応じた処理が必要)
+                # ここでは単純にコマンドを実行して結果を得ます
+                response = rcon.command(f"bal {mc_name}")
+                
+                # 【重要】ここがサーバーごとの表示形式に依存します
+                # 例えば "Balance: 1234" と返ってくる場合、数字だけを抽出します
+                import re
+                numbers = re.findall(r'\d+', response)
+                if numbers:
+                    new_balance = int(numbers[0])
+                    # Discord側のデータと異なっていたら更新
+                    if user.get("points") != new_balance:
+                        user["points"] = new_balance
+                        save_user_data(user["_id"], user)
+                        print(f"自動同期: {mc_name} の残高を {new_balance} に更新しました")
+    except Exception as e:
+        print(f"自動同期エラー: {e}")
+
+@auto_sync_from_mc.before_loop
+async def before_auto_sync():
+    await bot.wait_until_ready()
+
+# on_ready 内でタスクを開始させる
+# on_ready を以下のように書き換えてください
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user}')
+    if not check_vc_rewards.is_running(): check_vc_rewards.start()
+    if not auto_sync_from_mc.is_running(): auto_sync_from_mc.start()
+
 @bot.event
 async def on_voice_state_update(member, before, after):
     if member.bot: return
@@ -279,5 +319,27 @@ async def register(ctx, mc_name: str):
 async def give_points(ctx, member: discord.Member, amount: int):
     data = get_user_data(member.id); data["points"] += amount; save_user_data(member.id, data)
     sync_to_minecraft(member.id, amount); await ctx.send(f"✅ 付与完了: {member.mention}")
+
+
+@bot.command()
+async def sync(ctx):
+    """マイクラの残高をDiscordに強制同期する"""
+    data = get_user_data(ctx.author.id)
+    if not data.get("mc_name"):
+        await ctx.send("❌ まだマイクラ名を登録していません！ `!register <名前>` で登録してください。")
+        return
+
+    mc_name = data["mc_name"]
+    try:
+        with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT) as rcon:
+            # マイクラの残高を取得するコマンド
+            response = rcon.command(f"bal {mc_name}")
+            
+            # responseの中から数字だけを抽出（サーバーの表示形式に合わせて調整が必要な場合があります）
+            # ここではシンプルにコンソールに結果を表示し、ユーザーに手動入力してもらうか、
+            # 抽出処理を組み込むのが一般的です。
+            await ctx.send(f"🔍 マイクラサーバーからの応答:\n```\n{response}\n```\n※マイクラ内の残高をDiscordに反映させるには、管理者に相談するか、この数値を基準に管理してください。")
+    except Exception as e:
+        await ctx.send(f"❌ 同期エラー: {e}")
 
 bot.run(os.getenv('TOKEN'))
