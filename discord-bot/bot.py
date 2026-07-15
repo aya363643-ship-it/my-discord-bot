@@ -92,34 +92,39 @@ async def check_vc_rewards():
                         data["points"] += 50
                         save_user_data(user_id, data)
                         sync_to_minecraft(user_id, 50)
-                        channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
+                        channel = bot.get_channel(1447850881688010819)
                         if channel: await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
                     except Exception as e: print(f"VCエラー: {e}")
 
 # ─── マイクラ残高の自動反映タスク ───
-@tasks.loop(minutes=1)  # 5分ごとにマイクラの残高をチェック
+@tasks.loop(minutes=1)
 async def auto_sync_from_mc():
-    # 登録されている全ユーザーをMongoDBから取得
     all_users = collection.find({"mc_name": {"$ne": None}})
+    channel = bot.get_channel(1526095284357173358) # 通知用チャンネルを取得
     
     try:
         with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT) as rcon:
             for user in all_users:
                 mc_name = user["mc_name"]
-                # マイクラの残高を取得 (/bal コマンドの出力形式に応じた処理が必要)
-                # ここでは単純にコマンドを実行して結果を得ます
                 response = rcon.command(f"bal {mc_name}")
-                
-                # 【重要】ここがサーバーごとの表示形式に依存します
-                # 例えば "Balance: 1234" と返ってくる場合、数字だけを抽出します
                 import re
                 numbers = re.findall(r'\d+', response)
                 if numbers:
                     new_balance = int(numbers[0])
-                    # Discord側のデータと異なっていたら更新
-                    if user.get("points") != new_balance:
+                    old_balance = user.get("points")
+                    
+                    if old_balance != new_balance:
+                        # 差分を計算（増えた分だけ表示するため）
+                        diff = new_balance - old_balance
+                        
+                        # MongoDBを更新
                         user["points"] = new_balance
                         save_user_data(user["_id"], user)
+                        
+                        # ここでDiscordに通知を送る
+                        if channel and diff > 0:
+                            await channel.send(f"💰 **マイクラ収入通知**: {mc_name} さんがマイクラで {diff} コイン稼ぎました！Discordにも反映されました！")
+                        
                         print(f"自動同期: {mc_name} の残高を {new_balance} に更新しました")
     except Exception as e:
         print(f"自動同期エラー: {e}")
