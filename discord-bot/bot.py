@@ -100,16 +100,25 @@ async def check_vc_rewards():
 @tasks.loop(seconds=30)
 async def auto_sync_from_mc():
     all_users = collection.find({"mc_name": {"$ne": None}})
-    channel = bot.get_channel(1526095284357173358) # 通知用チャンネルを取得
+    channel = bot.get_channel(1526095284357173358)
     
     try:
         with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT) as rcon:
             for user in all_users:
                 mc_name = user["mc_name"]
                 response = rcon.command(f"bal {mc_name}")
+                
+                # 【重要：デバッグ用】コンソールに何が返ってきているか出力
+                print(f"DEBUG: {mc_name} の bal 結果: {response}")
+                
                 import re
+                # 数字を探す
                 numbers = re.findall(r'\d+', response)
-                if numbers:
+                
+                if not numbers:
+                    print(f"DEBUG: {mc_name} の数字抽出に失敗しました。")
+                    continue
+                
                     new_balance = int(numbers[0])
                     old_balance = user.get("points")
                     
