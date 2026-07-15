@@ -37,10 +37,13 @@ def sync_to_minecraft(user_id, amount_change):
     mc_name = data["mc_name"]
     try:
         with MCRcon(RCON_HOST, RCON_PASSWORD, port=RCON_PORT) as rcon:
-            if amount_change > 0: rcon.command(f"eco give {mc_name} {amount_change}")
-            elif amount_change < 0: rcon.command(f"eco take {mc_name} {abs(amount_change)}")
+            if amount_change > 0: response = rcon.command(f"eco give {mc_name} {amount_change}")
+            elif amount_change < 0: response = rcon.command(f"eco take {mc_name} {abs(amount_change)}")
+            print(f"マイクラへの送信結果: {response}") # ログに結果が出る
             return True
-    except: return False
+    except Exception as e:
+        print(f"マイクラ同期エラー: {e}") # ここでなぜ失敗したか分かる
+        return False
 
 # ─── 24時間稼働サーバー ───
 app = Flask('')
