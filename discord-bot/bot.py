@@ -19,7 +19,7 @@ collection = db["user_data"]
 
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
-RCON_PASSWORD = "あなたのパスワード"
+RCON_PASSWORD = "MySecretPassword123"
 
 def get_user_data(user_id):
     user_id_str = str(user_id)
