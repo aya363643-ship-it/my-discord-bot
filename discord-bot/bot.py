@@ -17,10 +17,9 @@ client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = client["my_discord_bot"]
 collection = db["user_data"]
 
-# ─── マイクラRCON設定 ───
 RCON_HOST = "127.0.0.1"
 RCON_PORT = 25575
-RCON_PASSWORD = "あなたのパスワード" 
+RCON_PASSWORD = "あなたのパスワード"
 
 def get_user_data(user_id):
     user_id_str = str(user_id)
@@ -89,7 +88,7 @@ async def check_vc_rewards():
                         data = get_user_data(user_id)
                         data["points"] += 50
                         save_user_data(user_id, data)
-                        sync_to_minecraft(user_id, 50) # ★追加
+                        sync_to_minecraft(user_id, 50)
                         channel = bot.get_channel(ANNOUNCEMENT_CHANNEL_ID)
                         if channel: await channel.send(f"🎙️ {member.mention} がボイスチャンネルに30分滞在したため、💰 **50コイン** を獲得しました！")
                     except Exception as e: print(f"VCエラー: {e}")
@@ -176,7 +175,7 @@ class SlotView(discord.ui.View):
         data = get_user_data(self.user_id)
         if mult > 1.0:
             win = int(self.bet * mult); data["points"] += win; save_user_data(self.user_id, data)
-            sync_to_minecraft(self.user_id, win) # ★追加
+            sync_to_minecraft(self.user_id, win)
             res_msg = f"🎉 **大当り！ {mult}倍！**\n💰 獲得: +{win}コイン"
         else: res_msg = f"💀 **残念！はずれ！**\n📉 損失: -{self.bet}コイン"
         grid_str = "\n".join([" | ".join(row) for row in self.final_grid])
@@ -190,49 +189,92 @@ class SlotView(discord.ui.View):
         if grid[0][2] == grid[1][1] == grid[2][0]: lines.append(grid[0][2])
         return lines
 
-# ─── コマンド用 ───
+class BJView(discord.ui.View):
+    def __init__(self, bet, user_id, msg):
+        super().__init__(timeout=60.0)
+        self.bet = bet
+        self.user_id = user_id
+        self.msg = msg
+        self.p_hand = []
+        self.d_hand = []
+        self.can_double = True
+    async def deal_cards(self):
+        for _ in range(2): self.p_hand.append(draw_card()); self.d_hand.append(draw_card())
+        await self.update_display("あなたのターンです", self)
+    async def update_display(self, status, view=None):
+        p_str = ", ".join([card_to_str(c) for c in self.p_hand])
+        d_str = f"{card_to_str(self.d_hand[0])}, ❓" if "あなたのターン" in status else ", ".join([card_to_str(c) for c in self.d_hand])
+        content = f"🃏 **Blackjack**\nディーラー: {d_str}\nあなた ({calc_score(self.p_hand)}点): {p_str}\n\n{status}"
+        await self.msg.edit(content=content, view=view)
+    @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary)
+    async def hit(self, i: discord.Interaction, b: discord.ui.Button):
+        self.can_double = False; self.p_hand.append(draw_card())
+        if calc_score(self.p_hand) > 21: await self.finish_game("💀 バースト！負けました...", 0)
+        else: await self.update_display("あなたのターンです", self)
+    @discord.ui.button(label="Stand", style=discord.ButtonStyle.secondary)
+    async def stand(self, i: discord.Interaction, b: discord.ui.Button): await self.dealer_turn()
+    async def dealer_turn(self):
+        while calc_score(self.d_hand) < 17: self.d_hand.append(draw_card())
+        d_sc, p_sc = calc_score(self.d_hand), calc_score(self.p_hand)
+        if d_sc > 21 or p_sc > d_sc: await self.finish_game("🎉 勝ち！", self.bet * 2)
+        elif p_sc == d_sc: await self.finish_game("🤝 引き分け", self.bet)
+        else: await self.finish_game("💀 負け...", 0)
+    async def finish_game(self, result_text, payout):
+        self.clear_items(); data = get_user_data(self.user_id)
+        if payout > 0: data["points"] += payout; sync_to_minecraft(self.user_id, payout - self.bet)
+        save_user_data(self.user_id, data); await self.msg.edit(content=f"{result_text}\n💳 所持金: {data['points']}コイン", view=None)
+
+class DiceView(discord.ui.View):
+    def __init__(self, bet, user_id, msg):
+        super().__init__(timeout=60.0); self.bet = bet; self.user_id = str(user_id); self.msg = msg
+        self.d_dice = [random.randint(1, 6), random.randint(1, 6)]; self.p_dice = []
+    async def start_dice(self):
+        btn = discord.ui.Button(label="振る！", style=discord.ButtonStyle.success)
+        btn.callback = self.roll; self.add_item(btn); await self.msg.edit(view=self)
+    async def roll(self, i: discord.Interaction):
+        self.p_dice.append(random.randint(1, 6))
+        if len(self.p_dice) == 2:
+            d_sum, p_sum = sum(self.d_dice), sum(self.p_dice); data = get_user_data(self.user_id)
+            if p_sum > d_sum: data["points"] += self.bet * 2; sync_to_minecraft(self.user_id, self.bet)
+            elif p_sum == d_sum: data["points"] += self.bet; sync_to_minecraft(self.user_id, 0)
+            save_user_data(self.user_id, data); await self.msg.edit(content=f"結果: D:{d_sum} vs P:{p_sum}", view=None)
+        else: await self.msg.edit(content=f"次を振ってね！ 現在: {self.p_dice}", view=self)
+
+# ─── コマンド ───
 async def get_bet(ctx):
     await ctx.send("💸 **賭け金を入力してね！**")
     try:
         m = await bot.wait_for('message', check=lambda x: x.author==ctx.author, timeout=30)
         bet = int(m.content); data = get_user_data(ctx.author.id)
-        if bet <= 0 or data["points"] < bet: await ctx.send("❌ 不正な額か、所持金不足！"); return None
-        data["points"] -= bet; save_user_data(ctx.author.id, data)
-        sync_to_minecraft(ctx.author.id, -bet) # ★追加
+        if bet <= 0 or data["points"] < bet: await ctx.send("❌ 不正か所持金不足！"); return None
+        data["points"] -= bet; save_user_data(ctx.author.id, data); sync_to_minecraft(ctx.author.id, -bet)
         return bet
-    except: await ctx.send("❌ 無効な入力か時間切れです。"); return None
+    except: await ctx.send("❌ 無効です。"); return None
 
 @bot.command()
 async def blackjack(ctx):
     bet = await get_bet(ctx)
-    if bet:
-        msg = await ctx.send("🃏 ゲーム開始...")
-        view = BJView(bet, ctx.author.id, msg)
-        await msg.edit(view=view); await view.deal_cards()
+    if bet: msg = await ctx.send("🃏 開始..."); v = BJView(bet, ctx.author.id, msg); await msg.edit(view=v); await v.deal_cards()
 
 @bot.command()
 async def slot(ctx):
     bet = await get_bet(ctx)
-    if bet: msg = await ctx.send("🎰 準備中..."); await msg.edit(view=SlotView(bet, ctx.author.id, msg))
+    if bet: msg = await ctx.send("🎰 開始..."); await msg.edit(view=SlotView(bet, ctx.author.id, msg))
 
 @bot.command()
 async def dice(ctx):
     bet = await get_bet(ctx)
-    if bet: msg = await ctx.send("🎲 準備中..."); v = DiceView(bet, ctx.author.id, msg); await msg.edit(view=v); await v.start_dice()
+    if bet: msg = await ctx.send("🎲 開始..."); v = DiceView(bet, ctx.author.id, msg); await v.start_dice()
 
 @bot.command()
 async def register(ctx, mc_name: str):
-    data = get_user_data(ctx.author.id)
-    data["mc_name"] = mc_name
-    save_user_data(ctx.author.id, data)
-    await ctx.send(f"✅ マイクラIDを **{mc_name}** に設定しました！")
+    data = get_user_data(ctx.author.id); data["mc_name"] = mc_name; save_user_data(ctx.author.id, data)
+    await ctx.send(f"✅ 登録完了: {mc_name}")
 
 @bot.command()
 @is_allowed_user()
 async def give_points(ctx, member: discord.Member, amount: int):
-    data = get_user_data(member.id)
-    data["points"] += amount; save_user_data(member.id, data)
-    sync_to_minecraft(member.id, amount) # ★追加
-    await ctx.send(f"✅ {member.mention} に {amount} コイン付与しました！")
+    data = get_user_data(member.id); data["points"] += amount; save_user_data(member.id, data)
+    sync_to_minecraft(member.id, amount); await ctx.send(f"✅ 付与完了: {member.mention}")
 
 bot.run(os.getenv('TOKEN'))
