@@ -97,7 +97,7 @@ async def check_vc_rewards():
                     except Exception as e: print(f"VCエラー: {e}")
 
 # ─── マイクラ残高の自動反映タスク ───
-@tasks.loop(minutes=1)
+@tasks.loop(seconds=30)
 async def auto_sync_from_mc():
     all_users = collection.find({"mc_name": {"$ne": None}})
     channel = bot.get_channel(1526095284357173358) # 通知用チャンネルを取得
